@@ -30,3 +30,5 @@ aiven-ca.pem
 # opencode.json contém segredos pessoais (API keys do provider local); é config
 # pessoal do opencode e não deve ser versionado.
 opencode.json
+
+dist/

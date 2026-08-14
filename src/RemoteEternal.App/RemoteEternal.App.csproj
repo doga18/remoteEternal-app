@@ -24,8 +24,15 @@
     <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x64</Platform>
   </PropertyGroup>
 
-  <ItemGroup Condition="Exists('..\..\libs\ffmpeg\bin')">
+  <!-- Build/dev normal: copia as DLLs FFmpeg para a saída (comportamento atual). -->
+  <ItemGroup Condition="Exists('..\..\libs\ffmpeg\bin') And '$(PublishSingleFile)' != 'true'">
     <None Include="..\..\libs\ffmpeg\bin\*.dll" CopyToOutputDirectory="PreserveNewest" Link="ffmpeg\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Publicação single-file: embute as DLLs FFmpeg como recursos para extração no runtime
+       (FfmpegLibrary extrai para <BaseDirectory>\ffmpeg na primeira execução). -->
+  <ItemGroup Condition="Exists('..\..\libs\ffmpeg\bin') And '$(PublishSingleFile)' == 'true'">
+    <EmbeddedResource Include="..\..\libs\ffmpeg\bin\*.dll" LogicalName="ffmpeg.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>
