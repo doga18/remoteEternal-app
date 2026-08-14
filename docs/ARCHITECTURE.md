@@ -2,19 +2,33 @@
 
 ## Visão geral
 
-O RemoteEternal é dividido em três projetos .NET 8 dentro de `src/`:
+O RemoteEternal é dividido em **dois repositórios independentes**, mantendo o mesmo produto:
 
-- `RemoteEternal.Core`: contratos e mecanismos compartilhados.
-- `RemoteEternal.App`: aplicação WPF Windows que pode atuar como host e cliente.
-- `RemoteEternal.Server`: servidor de controle e diretório.
+- `remoteEternal-api` (Node.js, em `api/`): **plano de controle**. API Express com WebSocket e PostgreSQL, responsável pelo diretório de hosts, pareamento e verificação de atualização. Substituiu o `RemoteEternal.Server` (C#).
+- `remoteEternal-app` (C# .NET, na raiz): aplicação WPF Windows (`RemoteEternal.App`) que atua como host e cliente, e o projeto compartilhado `RemoteEternal.Core` (contratos de sessão direta, criptografia e autenticação). Contém também `docs/`, `tests/` e a solution.
+
+O `RemoteEternal.Server` (C#) permanece no código como legado: os testes de integração C# ainda o exercitam, mas não é publicado nem documentado como parte ativa do produto.
 
 ## Planos de comunicação
 
 ### Plano de controle
 
-O App conecta ao Server por TCP usando `FrameChannel` e envelopes JSON. O acesso usa um ID de host de seis dígitos, sem contas de usuário ou login. O host solicita seu ID com `registerHost`, anuncia o acesso com `hostOnline` e o cliente resolve o destino com `getHostSalt` e `lookup`.
+O App fala com a API Node.js via **HTTP REST + WebSocket** (não existe mais servidor TCP C# ativo). O acesso usa um ID de host de seis dígitos, sem contas de usuário ou login. Endpoints (`/api`):
 
-No modo não assistido, o cliente envia o verifier derivado da senha para validação no `lookup`. No modo assistido, o host recebe `connectNotify` com o pedido. O servidor aguarda `connectAck` por até 20 segundos; após a aceitação, retorna ao cliente IP, porta e token de sessão. `Ping` também faz parte do contrato. O servidor coordena o encontro, mas a mídia não passa pelo Server.
+- `GET /api/health` — saúde e versão da API.
+- `POST /api/hosts/register` `{deviceName, os}` → `{ok, hostId}` — atribui um ID único de 6 dígitos.
+- `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier}` → `{ok}` — anuncia o host online e registra o modo de acesso (assisted/unassisted) e as credenciais do modo não assistido.
+- `GET /api/hosts/:hostId/salt` → `{ok, accessMode, salt}` — consulta o salt e o modo do host.
+- `POST /api/hosts/:hostId/lookup` `{authHash}` → `{ok, ip, port, sessionToken}` — encontro entre cliente e host; aguarda a decisão do host por até 20 segundos.
+- `GET /api/update/latest?currentVersion=X` → `{ok, update: {version, url, notes} | null}` — verificação de atualização do App.
+
+WebSocket em `/ws` (usado **apenas pelo host**):
+
+- Host → API: `hello {hostId}` → API → Host: `helloResult`.
+- API → Host: `connectNotify {sessionToken, clientName, clientOs, requiresApproval}`.
+- Host → API: `connectAck {hostId, accepted, listenPort}` → API → Host: `connectAckResult`.
+
+No modo não assistido, o cliente deriva `authHash` (PBKDF2) da senha e o envia no `lookup`; a API valida com comparação em tempo constante. No modo assistido, o host recebe `connectNotify` com o pedido e aprova manualmente. A API coordena o encontro, mas a mídia não passa pelo Server nem pela API.
 
 ### Sessão direta
 
@@ -24,21 +38,32 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 
 ## Projetos e responsabilidades
 
-### Core
+### API (Node.js — `api/`)
 
-- `Protocol/ControlMessages.cs`: contratos do plano de controle, incluindo `RegisterHost`, `HostOnline`, `GetHostSalt`, `Lookup`, `ConnectNotify`, `ConnectAck` e `Ping`.
-- `Protocol/SessionProtocol.cs`: controle de sessão, monitores e eventos de input.
+- `src/index.js`: aplicação Express + HTTP + WebSocket, rotas do plano de controle e canal WS do host.
+- `src/db.js`: pool `pg` (formato Aiven `DB_*` ou `DATABASE_URL`), SSL com CA e `initDb()`.
+- `src/schema.sql`: `CREATE TABLE IF NOT EXISTS hosts`.
+- `src/registry.js`: diretório em memória de hosts online (`HostRegistry`) e de pendências de lookup.
+- `src/rateLimit.js`: `RateLimiter` — 5 falhas de lookup por IP em 60 segundos.
+- `src/update.js`: `CURRENT_VERSION` e catálogo de versões do App (`getLatestUpdate`).
+- `src/validate.js`: validação de ID, base64, porta e nomes.
+- `tests/`: unitários (`update`, `rateLimit`) e integração com Postgres (`api.integration.test.js`).
+
+### Core (C# — `src/RemoteEternal.Core`)
+
+- `Protocol/ControlMessages.cs`: contratos de sessão e dados compartilhados usados pelo App no plano de controle (registros de requisição/resultado como `RegisterHostResult`, `HostOnlineResult`, `GetHostSaltResult`, `LookupResult`, `ConnectNotify` e `ConnectAck`), além de `Envelope`.
+- `Protocol/SessionProtocol.cs`: controle de sessão direta, monitores e eventos de input.
 - `Net/FrameChannel.cs`: framing de comprimento e limite de frame.
 - `Crypto/SecureFrameChannel.cs`: AES-GCM, nonce e transporte seguro da sessão; `SessionRole` define o sentido das chaves e `SessionSaltV1` identifica o salt fixo do protocolo direcional.
 - `Crypto/Hkdf.cs`: derivação de chaves.
-- `Auth/PasswordHasher.cs`: salt, derivação e verificação de credenciais do modo não assistido.
+- `Auth/PasswordHasher.cs`: salt, derivação e verificação de credenciais do modo não assistido (PBKDF2, usado no cliente).
 
-### App
+### App (C# WPF — `src/RemoteEternal.App`)
 
-- `Views/MainWindow`: conexão com o servidor, configuração do host assistido ou não assistido, exibição do ID e conexão do cliente por ID.
+- `Views/MainWindow`: campo "URL da API", configuração do host assistido ou não assistido, exibição do ID, conexão do cliente por ID e verificação de atualização ao abrir.
 - `Views/ViewerWindow`: visualização, seleção de monitor, áudio e input.
-- `Services/AppState`: servidor, porta, ID persistido em `host.id` e configuração local; a senha não é persistida.
-- `Services/ServerConnection`: conexão e métodos `RegisterHostAsync`, `HostOnlineAsync`, `GetHostSaltAsync`, `LookupAsync` e `SendConnectAckAsync`.
+- `Services/AppState`: URL da API (`apiUrl`), porta do listener, ID persistido em `host.id` e configuração local; a senha nunca é persistida.
+- `Services/ServerConnection`: cliente HTTP + WebSocket com `ConnectAsync`, `RegisterHostAsync`, `HostOnlineAsync`, `GetHostSaltAsync`, `LookupAsync`, `GetLatestUpdateAsync`, `HostWsConnectAsync` e `SendConnectAckWsAsync`.
 - `Services/SessionHost`: listener reutilizável do host, captura e input.
 - `Services/SessionClient`: cliente direto e recebimento de mídia.
 - `Services/SessionStream`: transporte de blocos de mídia.
@@ -46,28 +71,25 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 - `Media`: FFmpeg, decodificação e NAudio.
 - `Input/InputSimulator`: injeção Win32 de mouse e teclado.
 
-### Server
+### Server (C# legado — `src/RemoteEternal.Server`)
 
-- `Program`: argumentos `--port`, `--db` e `--no-register` e inicialização.
-- `RemoteEternalServer`: listener TCP e ciclo de vida.
-- `ClientSession`: atendimento por conexão e handlers do plano de controle.
-- `HostStore`: diretório LiteDB de hosts na coleção `hosts`, com índice único por `HostId`.
-- `RateLimiter`: limite de cinco falhas de lookup por IP em 60 segundos.
-- `ClientRegistry`: hosts online (`OnlineHost`) e consultas pendentes (`PendingLookup`).
+- `Program`: argumentos `--port`, `--db` e `--no-register` (porta legada 7000).
+- `RemoteEternalServer`, `ClientSession`, `HostStore`, `RateLimiter` e `ClientRegistry`: servidor TCP e diretório LiteDB do plano de controle anterior.
+- **Status: legado/não publicado.** Substituído pela API Node.js como plano de controle ativo; continua no repositório apenas porque os testes de integração C# (`tests/RemoteEternal.Core.Tests/ControlPlaneIntegrationTests.cs`) ainda o exercitam.
 
 ## Fluxo nominal
 
-1. O Server inicia na porta de controle e abre o banco LiteDB.
-2. O host inicia o App, conecta ao Server e solicita um ID único de seis dígitos com `registerHost`.
+1. A API Node.js inicia na porta `3000` e conecta ao PostgreSQL (Aiven ou local).
+2. O host inicia o App, informa a URL da API (ex.: `http://localhost:3000`) e conecta; a API responde `GET /api/health`.
 3. O host escolhe acesso assistido ou não assistido; no modo não assistido, cria senha, salt e verifier PBKDF2 localmente.
-4. Ao clicar em Iniciar acesso, o host envia `hostOnline`, inicia o listener direto na porta `5050` e exibe o ID.
-5. O cliente informa o ID do host e, se necessário, a senha, obtém o salt com `getHostSalt` e consulta o destino com `lookup`.
-6. O Server aplica o rate limit, valida o verifier no modo não assistido, gera um token de sessão e envia `connectNotify` ao host.
+4. Ao clicar em Iniciar acesso, o host obtém um ID único de seis dígitos (`registerHost`, persistido em `host.id`), anuncia-se online (`hostOnline`), conecta o WebSocket (`hello`) e inicia o listener direto na porta `5050`.
+5. O cliente informa a mesma URL da API, digita o ID do host e, se necessário, a senha; obtém o salt com `getHostSalt` e consulta o destino com `lookup`.
+6. A API aplica o rate limit, valida o verifier no modo não assistido, gera um token de sessão e envia `connectNotify` ao host pelo WebSocket.
 7. No modo assistido, o host mostra o pedido e exige aprovação manual; no modo não assistido, aceita automaticamente.
-8. O host responde `connectAck`; o Server devolve ao cliente IP, porta e token de sessão.
+8. O host responde `connectAck`; a API devolve ao cliente IP, porta e token de sessão.
 9. O cliente conecta diretamente ao host com `SecureFrameChannel`; o host envia monitores e o cliente inicia a sessão escolhendo monitor e áudio.
 10. O host captura e envia vídeo/áudio; o cliente decodifica, reproduz e envia eventos de entrada autorizados.
-11. Ao desconectar, parar o acesso ou fechar o App, a sessão, o listener e os pedidos pendentes são encerrados e os recursos liberados.
+11. Ao desconectar, parar o acesso ou fechar o App, a sessão, o listener, o WebSocket do host e os pedidos pendentes são encerrados e os recursos liberados.
 
 ## Mídia
 
@@ -79,17 +101,14 @@ Buffers precisam ter limites e preservar o tamanho real dos blocos. Reinicializa
 
 A sessão direta possui cifragem autenticada AES-GCM com derivação HKDF de chaves separadas por direção. `SecureFrameChannel.CreateDirectional` deriva `keyWrite` com `info+"write"` e `keyRead` com `info+"read"`; `SessionRole.Host` cifra com `keyWrite` e decifra com `keyRead`, enquanto `SessionRole.Client` faz o inverso. O segredo da sessão é o token de sessão gerado no `lookup`, o salt fixo é `SessionSaltV1` e o info usado pelo App é `"re-session"`. `FromSecret` permanece disponível para compatibilidade.
 
-No modo não assistido, a senha do host permanece no cliente e é representada por salt e verifier PBKDF2 gerados no cliente; a senha nunca é transmitida em claro. O Server valida o verifier usando comparação em tempo constante. O `RateLimiter` bloqueia temporariamente cinco falhas em 60 segundos por IP, incluindo senha incorreta e ID inexistente.
+No modo não assistido, a senha do host permanece no cliente e é representada por salt e verifier PBKDF2 gerados no cliente; a senha nunca é transmitida em claro. A API Node.js valida o verifier usando comparação em tempo constante (`crypto.timingSafeEqual`). O `RateLimiter` da API bloqueia temporariamente cinco falhas em 60 segundos por IP, incluindo senha incorreta e ID inexistente.
 
 O ID de seis dígitos não é segredo suficiente por si só. O modo não assistido exige senha forte; o modo assistido exige aprovação manual visível do host. O token de sessão é separado do ID e criado para cada conexão autorizada.
 
-A evolução para acesso pela internet, NAT traversal, relay, heartbeat efetivo e encerramento explícito de hosts continua pendente e exige desenho próprio de segurança e operação.
+A evolução para acesso pela internet, NAT traversal, relay, heartbeat efetivo com lease e encerramento explícito de hosts continua pendente e exige desenho próprio de segurança e operação.
 
 ## Build e distribuição
 
-- Solution: `RemoteEternal.sln`.
-- App: `net8.0-windows`, WPF, x64.
-- Server e Core: `net8.0`.
-- Publicação: `publish\app`, `publish\server`, `publish\IniciarServidor.bat` e `publish\IniciarApp.bat`.
-- `publish\app\ffmpeg` contém as DLLs nativas necessárias para mídia.
+- Repositório **remoteEternal-app**: solution `RemoteEternal.sln`; App `net8.0-windows`, WPF, x64; Core `net8.0`; testes xUnit. Publicação em `publish\app` e `publish\IniciarApp.bat`. `publish\app\ffmpeg` contém as DLLs nativas necessárias para mídia.
+- Repositório **remoteEternal-api**: Node.js 18+; `npm install` e `npm start` (porta `PORT`, default `3000`); banco PostgreSQL (Aiven ou local) via `DATABASE_URL` ou `DB_*`; testes com `node --test`. Publicação/deploy independente (ex.: Render).
 - Firewall, portas e permissões devem ser validados em Windows x64.

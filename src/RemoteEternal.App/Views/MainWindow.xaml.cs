@@ -15,8 +15,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        TxtServer.Text = AppState.ServerAddress;
-        TxtPort.Text = AppState.ServerPort.ToString();
+        TxtApiUrl.Text = AppState.ApiUrl;
         UpdateHostPasswordVisibility();
         _host.StatusChanged += msg => Dispatcher.Invoke(() => TxtHostStatus.Text = msg);
         _host.SessionActiveChanged += active => Dispatcher.Invoke(() =>
@@ -27,13 +26,8 @@ public partial class MainWindow : Window
 
     private async void OnConnectServerClick(object sender, RoutedEventArgs e)
     {
-        string server = TxtServer.Text.Trim();
-        if (string.IsNullOrEmpty(server)) { ShowConnectError("Informe o endereço do servidor"); return; }
-        if (!int.TryParse(TxtPort.Text.Trim(), out var port) || port is < 1 or > 65535)
-        {
-            ShowConnectError("Porta inválida");
-            return;
-        }
+        string apiUrl = TxtApiUrl.Text.Trim();
+        if (string.IsNullOrEmpty(apiUrl)) { ShowConnectError("Informe a URL da API"); return; }
         try
         {
             SetConnectBusy(true);
@@ -52,17 +46,23 @@ public partial class MainWindow : Window
                 ConnectPanel.Visibility = Visibility.Visible;
                 ShowConnectError("Conexão com o servidor perdida.");
             });
-            await conn.ConnectAsync(server, port);
+            conn.HostWsClosed += () => Dispatcher.InvokeAsync(async () =>
+            {
+                if (!_hostActive) return;
+                await StopHostAsync();
+                TxtHostStatus.Text = "Canal do host encerrado.";
+            });
+            await conn.ConnectAsync(apiUrl);
             _conn = conn;
 
-            AppState.ServerAddress = server;
-            AppState.ServerPort = port;
+            AppState.ApiUrl = apiUrl;
             AppState.Save();
+            _ = CheckForUpdateAsync();
 
             RegisterHostNotifications();
             ConnectPanel.Visibility = Visibility.Collapsed;
             MainPanel.Visibility = Visibility.Visible;
-            TxtServerLabel.Text = $"{server}:{port}";
+            TxtServerLabel.Text = apiUrl;
             TxtHostId.Text = _hostActive && !string.IsNullOrEmpty(AppState.HostId) ? AppState.HostId : "—";
         }
         catch (Exception ex)
@@ -88,10 +88,8 @@ public partial class MainWindow : Window
     private void RegisterHostNotifications()
     {
         if (_conn is null) return;
-        _conn.On(MsgTypes.ConnectNotify, env =>
+        _conn.ConnectNotifyReceived += notify =>
         {
-            var notify = EnvelopeUtil.Data<ConnectNotify>(env);
-            if (notify is null) return;
             _host.AddPendingToken(notify.SessionToken);
             Dispatcher.Invoke(() => TxtHostStatus.Text = $"Conexão solicitada por {notify.ClientName} ({notify.ClientOs})");
 
@@ -112,7 +110,7 @@ public partial class MainWindow : Window
                 // Modo não assistido: senha já validada pelo servidor; aceite automático.
                 _ = SendConnectAckSafeAsync(true);
             }
-        });
+        };
     }
 
     private async Task SendConnectAckSafeAsync(bool accepted)
@@ -120,7 +118,7 @@ public partial class MainWindow : Window
         try
         {
             if (_conn is null || string.IsNullOrEmpty(AppState.HostId)) return;
-            await _conn.SendConnectAckAsync(AppState.HostId, accepted, accepted ? AppState.ListenPort : 0);
+            await _conn.SendConnectAckWsAsync(AppState.HostId, accepted, accepted ? AppState.ListenPort : 0);
         }
         catch (Exception ex)
         {
@@ -186,6 +184,16 @@ public partial class MainWindow : Window
             }
 
             await _host.StartAsync(AppState.ListenPort);
+            try
+            {
+                await _conn.HostWsConnectAsync(hostId);
+            }
+            catch
+            {
+                await _conn.HostWsCloseAsync();
+                await _host.StopAsync();
+                throw;
+            }
             _hostActive = true;
             BtnToggleHost.Content = "Parar acesso";
             TxtHostId.Text = hostId;
@@ -215,6 +223,7 @@ public partial class MainWindow : Window
 
     private async Task StopHostAsync()
     {
+        if (_conn is not null) await _conn.HostWsCloseAsync();
         await _host.StopAsync();
         _hostActive = false;
         BtnToggleHost.Content = "Iniciar acesso";
@@ -283,6 +292,26 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            if (_conn is null) return;
+            var update = await _conn.GetLatestUpdateAsync(AppState.AppVersion);
+            if (update is not null && !string.IsNullOrWhiteSpace(update.Version))
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    TxtUpdateInfo.Text = $"Nova versão {update.Version} disponível. Baixe em: {update.Url}";
+                    TxtUpdateInfo.Visibility = Visibility.Visible;
+                });
+            }
+        }
+        catch
+        {
+            // Atualização é opcional; falha não impede o uso do App.
+        }
+    }
     private static bool IsValidHostId(string id) =>
         id.Length == 6 && id.All(char.IsAsciiDigit);
 

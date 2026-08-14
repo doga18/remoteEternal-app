@@ -1,5 +1,16 @@
 # CHANGELOG.md
 
+## 2026-08-14 — Migração do plano de controle para API Node.js
+
+- Plano de controle substituído: o `RemoteEternal.Server` (C#, TCP + LiteDB) deixou de ser o componente ativo e foi substituído pela **API Node.js** (`api/`, Express + WebSocket + PostgreSQL). O App agora fala com a API via HTTP REST + WebSocket.
+- Repositórios separados: `api/` = `remoteEternal-api` (https://github.com/doga18/remoteEternal-api.git); raiz (`src/`, `docs/`, `tests/`, solution) = `remoteEternal-app` (https://github.com/doga18/remoteEternal-app.git). Separação física via `.gitignore`.
+- API Node.js: endpoints `GET /api/health`, `POST /api/hosts/register`, `POST /api/hosts/online`, `GET /api/hosts/:hostId/salt`, `POST /api/hosts/:hostId/lookup` (aguarda `connectAck` do host por até 20 s) e `GET /api/update/latest`. WebSocket em `/ws` com `hello`/`helloResult`, `connectNotify` e `connectAck`/`connectAckResult`.
+- Banco PostgreSQL: formato Aiven (`DB_HOST`, `DB_PORT` default 14673, `DB_DATABASE` default `remoteeternalapi`, `DB_USER`, `DB_PASS`) com certificado CA em `api\config\aiven-ca.pem` (`ssl rejectUnauthorized true`); também aceita `DATABASE_URL` (Postgres local). Pool reduzido (max 5, min 1).
+- App (C#): `ServerConnection` reescrito para `HttpClient` + `ClientWebSocket`; `MainWindow` com campo "URL da API"; verificação de atualização ao abrir via `GET /api/update/latest` ("Nova versão X disponível"). Fluxo do host por HTTP/WS; fluxo do cliente via salt + lookup.
+- `RemoteEternal.Server` (C#) permanece como legado no código, apenas exercitado pelos testes de integração C#; não é mais publicado nem documentado como peça ativa.
+- Sessão direta inalterada: `SecureFrameChannel` AES-GCM com chaves por direção, `SessionSaltV1`, info `"re-session"`, `SessionHost`/`SessionClient`/`ViewerWindow`, ScreenRecorderLib e FFmpeg em `publish\app\ffmpeg`.
+- Testes: 13 testes C# (8 unitários + 5 integração do servidor legado) e API Node com 12 testes unitários (update, rateLimit) + 1 de integração (requer `DATABASE_URL`).
+
 ## 2026-08-14 — Novo modelo de acesso por ID (TeamViewer-like)
 
 - Contrato do plano de controle substituído: removidos contas, login, lista de dispositivos e pareamento por conta (`Register`, `GetSalt`, `Login`, `ListDevices`, `Announce`, `Pair`, `PairNotify`, `PairAck`).
@@ -8,7 +19,7 @@
 - App: `MainWindow` redesenhada sem login, com painéis de conexão, HOST (assistido/não assistido, senha) e CLIENTE (ID + senha). `ServerConnection` com `RegisterHostAsync`, `HostOnlineAsync`, `GetHostSaltAsync`, `LookupAsync` e `SendConnectAckAsync`. `AppState` persiste o HostId em `host.id` (senha nunca persistida). `SessionHost` com `StopAsync` reutilizável.
 - Testes: 13 testes passando (8 unitários + 5 integração) em `tests\RemoteEternal.Core.Tests`.
 - Corrigido bug do `HostStore`: o índice único por `HostId` quebrava porque `HostDoc.Id` era usado como `HostId`; o `HostId` agora é campo próprio com índice único.
-- Distribuição: `publish\app` (App + `ffmpeg` com 7 DLLs), `publish\server`, `publish\IniciarServidor.bat` e `publish\IniciarApp.bat`.
+- Distribuição daquele estado histórico: `publish\app` (App + `ffmpeg` com 7 DLLs), `publish\server`, `publish\IniciarServidor.bat` e `publish\IniciarApp.bat`; posteriormente o servidor C# foi substituído pela API Node.js e deixou de ser peça publicada.
 
 ## 2026-08-14
 

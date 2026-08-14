@@ -1,13 +1,20 @@
 # OPERATING.md
 
-## Build
+## Visão geral de operação
+
+O produto tem dois componentes independentes:
+
+- **API Node.js** (`api/`, repositório `remoteEternal-api`): plano de controle (Express + WebSocket + PostgreSQL). É o que substitui o antigo servidor TCP C#.
+- **App Windows** (`RemoteEternal.App`, repositório `remoteEternal-app`): aplicação WPF que atua como host e cliente.
+
+## Build do App (.NET 8)
 
 Pré-requisito: .NET 8 SDK em Windows x64.
 
 - Solution: `RemoteEternal.sln`.
 - `RemoteEternal.App`: `net8.0-windows`, WPF, **x64 obrigatório**.
-- `RemoteEternal.Server` e `RemoteEternal.Core`: `net8.0`.
-- Server usa LiteDB; App usa ScreenRecorderLib, NAudio e FFmpeg.AutoGen.
+- `RemoteEternal.Core`: `net8.0`.
+- App usa ScreenRecorderLib, NAudio e FFmpeg.AutoGen.
 
 Build Debug (padrão):
 
@@ -24,31 +31,45 @@ dotnet build RemoteEternal.sln -c Release
 ### Plataforma x64
 
 - O App **não pode** ser compilado como `AnyCPU`: o pacote `ScreenRecorderLib` 6.6.0 aborta o build com `ScreenRecorderLib does not work correctly on 'AnyCPU' platform. You need to specify platform (x86, Win32, x64 or ARM64).`
-- A solution mapeia os três projetos para a configuração de projeto `x64` em todas as plataformas de solução (`Any CPU` e `x64`). Por isso `dotnet build RemoteEternal.sln` (padrão `Debug|Any CPU`) já compila o App como x64, sem argumentos adicionais.
+- A solution mapeia os projetos para a configuração de projeto `x64` em todas as plataformas de solução. Por isso `dotnet build RemoteEternal.sln` (padrão `Debug|Any CPU`) já compila o App como x64, sem argumentos adicionais.
 - Para selecionar explicitamente a plataforma x64: `dotnet build RemoteEternal.sln -p:Platform=x64`.
 - O `RemoteEternal.App.csproj` fixa `Platforms=x64`, `PlatformTarget=x64` e redireciona `AnyCPU` para `x64`; essas propriedades devem ser mantidas.
 
-## Execução
+## Execução da API Node.js (plano de controle)
 
-### Servidor de controle
+Pré-requisito: Node.js 18+ em qualquer máquina da rede (para produção, um serviço web como o Render).
 
-Porta padrão `7000`. Argumentos:
+```text
+cd api
+npm install
+npm start        # ou npm run dev (recarrega em mudanças)
+```
 
-- `--port <porta>`: porta do listener.
-- `--db <arquivo>`: caminho do banco LiteDB.
-- `--no-register`: desabilita a criação de novos hosts.
+A API sobe na porta `PORT` (default `3000`) e expõe HTTP e WebSocket (`/ws`) na mesma porta.
 
-O servidor responde pelo plano de controle por ID (`registerHost`, `hostOnline`, `getHostSalt`, `lookup`, `connectNotify`, `connectAck`, `ping`). Não transporta mídia.
+### Banco de dados (PostgreSQL)
 
-### Host
+A API usa PostgreSQL. Dois formatos de conexão (use apenas um):
 
-O App atua como host após escolher o modo e iniciar o acesso. O host solicita um ID de seis dígitos ao servidor, anuncia-se online com `hostOnline` e inicia o listener da sessão direta na porta `5050`. No modo assistido, cada conexão exige aprovação manual; no modo não assistido, o cliente usa ID + senha.
+- **Formato Aiven** (produção, ex.: `remoteeternalapi` no Aiven): variáveis `DB_HOST`, `DB_PORT` (default `14673`), `DB_DATABASE` (default `remoteeternalapi`), `DB_USER`, `DB_PASS`, e o certificado CA em `api\config\aiven-ca.pem` (`ssl` com `rejectUnauthorized: true`). O CA é público (não é segredo) e pode ser versionado no repositório da API.
+- **`DATABASE_URL`** (Postgres local de teste): `postgres://usuario:senha@localhost:5432/remoteeternal`. Sem certificado CA e sem `sslmode`, o SSL é desabilitado; com `sslmode=require`, usa `rejectUnauthorized: false`; com `sslmode=verify-ca`/`verify-full`, exige certificado.
 
-### Cliente
+A tabela `hosts` é criada no boot (`CREATE TABLE IF NOT EXISTS`). O pool é reduzido (**max 5, min 1**) porque o Aiven tem `max_connections=20`. Se `DATABASE_URL` e `DB_*` existirem juntos, `DATABASE_URL` tem prioridade.
 
-O App atua como cliente: conecta ao servidor de controle, informa o ID do host (e a senha no modo não assistido), obtém o salt com `getHostSalt` e consulta o destino com `lookup`, conecta ao host usando o token de sessão e recebe vídeo/áudio e envia eventos de input.
+Sem banco configurado a API sobe mesmo assim: `GET /api/health` responde e os endpoints de banco respondem `503`. Configure as variáveis antes de iniciar em produção.
 
-### Dependência nativa FFmpeg
+## Execução do App
+
+O App é distribuído como WPF Windows x64. Ao abrir, informe a **URL da API** (ex.: `http://localhost:3000`) e conecte. O App então pode atuar como host (obter ID, anunciar-se online, conectar o WebSocket do host e aguardar conexões) ou como cliente (consultar salt, `lookup` e conectar direto ao host).
+
+## Scripts de início
+
+- **`IniciarAPI.bat`** (ou `npm start` em `api/`): inicia o plano de controle Node.js. A janela deve permanecer aberta.
+- **`IniciarApp.bat`**: inicia o App sem manter uma janela extra do terminal.
+
+Os scripts de distribuição são tratados pela tarefa de release; este documento registra apenas o conceito de cada um.
+
+## Dependência nativa FFmpeg
 
 - `FfmpegLibrary.EnsureLoaded()` procura as DLLs em `<BaseDirectory>\ffmpeg` e as adiciona ao `PATH`.
 - **Estado atual: PROVISIONADO.** As DLLs estão em `publish\app\ffmpeg`:
@@ -57,24 +78,21 @@ O App atua como cliente: conecta ao servidor de controle, informa o ID do host (
   - `swscale-9.dll` (major 9).
   - `swresample-6.dll` (major 6).
   - `avfilter-11.dll` (major 11).
-- A origem do pacote é BtbN autobuild-2025-09-30, FFmpeg 8.x, compatível com FFmpeg.AutoGen 8.1.0.
+- A origem do pacote é BtbN autobuild, FFmpeg 8.x, compatível com FFmpeg.AutoGen.
 
 ## Distribuição
 
-A pasta `publish` contém uma distribuição self-contained `win-x64` pronta para teste:
-
 - `publish\app\RemoteEternal.exe` é o App WPF.
 - `publish\app\ffmpeg\` contém as DLLs nativas necessárias para vídeo e áudio.
-- `publish\server\RemoteEternal.Server.exe` é o servidor de controle.
-- `publish\IniciarServidor.bat` inicia o servidor na porta `7000` e deve permanecer aberto.
-- `publish\IniciarApp.bat` inicia o App sem manter uma janela extra do terminal.
+- A API é distribuída independentemente (repo `remoteEternal-api`), ex.: no Render como Web Service (`npm install` / `npm start`).
 - O roteiro para iniciantes está em `docs\TESTANDO.md`.
 
 ## Firewall
 
-- Servidor de controle: liberar a porta do listener (padrão `7000`) na rede local.
+- API (plano de controle): liberar a porta `3000` (ou `PORT`) na máquina que roda a API.
 - Host: liberar a porta do listener da sessão direta (padrão `5050`).
-- O plano de controle e a sessão direta trafegam em TCP; regras devem restringir ao perfil de rede adequado.
+- A porta `7000` do antigo servidor C# não é mais usada.
+- Regras devem restringir ao perfil de rede adequado.
 
 ## Permissões
 

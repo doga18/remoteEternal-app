@@ -61,16 +61,9 @@
                 <StackPanel>
                     <TextBlock Text="RemoteEternal" FontSize="26" FontWeight="Bold" Foreground="{StaticResource TextBrush}" HorizontalAlignment="Center"/>
                     <TextBlock Text="Acesso remoto simples e ilimitado" FontSize="12" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" Margin="0,2,0,18"/>
-                    <TextBlock Text="Servidor" Foreground="{StaticResource MutedBrush}"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="TxtServer" Text="127.0.0.1"/>
-                        <TextBlock Grid.Column="1" Text=":" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Margin="6,4,6,4"/>
-                        <TextBox Grid.Column="1" x:Name="TxtPort" Text="7000" Width="64" Margin="14,4,0,4"/>
-                    </Grid>
+                    <TextBlock Text="URL da API" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBox x:Name="TxtApiUrl" Text="http://localhost:3000"/>
+                    <TextBlock x:Name="TxtUpdateInfo" Foreground="#FF9DD6FF" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                     <TextBlock x:Name="TxtConnectError" Foreground="#FFFF8A80" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                     <Button x:Name="BtnConnectServer" Content="Conectar servidor" Click="OnConnectServerClick"/>
                 </StackPanel>

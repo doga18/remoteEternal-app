@@ -4,6 +4,8 @@ namespace RemoteEternal.App.Services;
 
 public static class AppState
 {
+    /// <summary>Versão enviada ao endpoint de atualização; altere ao publicar uma nova versão.</summary>
+    public const string AppVersion = "1.0.0";
     private static string ConfigDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RemoteEternal");
 
@@ -16,8 +18,7 @@ public static class AppState
     /// <summary>ID público de 6 dígitos do host, atribuído pelo servidor e persistido localmente.</summary>
     public static string HostId { get; private set; } = "";
 
-    public static string ServerAddress { get; set; } = "127.0.0.1";
-    public static int ServerPort { get; set; } = 7000;
+    public static string ApiUrl { get; set; } = "http://localhost:3000";
     public static int ListenPort { get; set; } = 5050;
     public static string LastUsername { get; set; } = "";
 
@@ -79,8 +80,7 @@ public static class AppState
                 string value = line[(i + 1)..].Trim();
                 switch (key)
                 {
-                    case "server": ServerAddress = value; break;
-                    case "port": if (int.TryParse(value, out var p)) ServerPort = p; break;
+                    case "apiUrl": ApiUrl = value; break;
                     case "listenPort": if (int.TryParse(value, out var lp)) ListenPort = lp; break;
                     case "username": LastUsername = value; break;
                 }
@@ -97,8 +97,7 @@ public static class AppState
         {
             File.WriteAllLines(ConfigFile, new[]
             {
-                $"server={ServerAddress}",
-                $"port={ServerPort}",
+                $"apiUrl={ApiUrl}",
                 $"listenPort={ListenPort}",
                 $"username={LastUsername}"
             });

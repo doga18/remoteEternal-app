@@ -4,54 +4,75 @@
 
 O computador controlado é o host e recebe um ID de seis números. O computador que controla é o cliente: ele digita esse ID e, no modo não assistido, também informa a senha. No modo assistido, o host precisa aprovar manualmente cada solicitação.
 
-O servidor de controle usa a porta `7000`. A sessão direta usa a porta `5050` no host.
+O plano de controle agora é uma **API Node.js** (Express + WebSocket + PostgreSQL). O App não usa mais o servidor TCP C#. Nos dois computadores, o App tem um campo **URL da API** que deve apontar para a API (ex.: `http://localhost:3000`).
+
+A sessão direta usa a porta `5050` no host. A porta `7000` do antigo servidor C# não é mais usada.
 
 ## 2. O que você precisa
 
 - Dois computadores Windows x64 na mesma rede local para o teste completo.
-- A pasta `publish` completa, sem separar `app` de `server`.
+- A API Node.js em execução em uma máquina acessível pela rede (veja abaixo).
+- O App publicado (pasta `publish\app`) nos dois computadores.
 - Permissão para liberar os programas no Firewall do Windows.
-- O IP do computador que executará o servidor.
+- O IP da máquina que executa a API.
 
-## 3. Teste completo com dois computadores
+## 3. Onde rodar a API
+
+Para teste local, a API pode rodar em **qualquer máquina da rede** com Node.js 18+ instalado (ex.: o computador A):
+
+```text
+cd api
+npm install
+npm start        # ou npm run dev
+```
+
+A API sobe na porta `3000` e conecta ao PostgreSQL (Aiven ou local) via `DATABASE_URL` ou variáveis `DB_*` — veja `api\README.md` e `api\.env.example`. Sem banco configurado a API sobe, mas os endpoints de hosts respondem `503`; para um teste completo, configure o banco antes.
+
+Nos dois Apps, informe a mesma **URL da API**: `http://IP-de-A:3000` (ou `http://localhost:3000` se a API rodar na mesma máquina do App). Clique em **Conectar servidor** nos dois computadores.
+
+## 4. Teste completo com dois computadores
 
 Neste roteiro, o computador A é controlado e o computador B controla.
 
-1. No computador A, execute `publish\IniciarServidor.bat` e deixe a janela aberta.
-2. Ainda no computador A, execute `publish\IniciarApp.bat`.
-3. No computador B, execute `publish\IniciarApp.bat`.
-4. Nos Apps de A e B, preencha **Servidor** com o IP de A e **Porta** com `7000`. Clique em **Conectar servidor** nos dois computadores.
-5. Em A, no painel HOST, escolha **Assistido** ou **Não assistido**. Se escolher Não assistido, defina uma senha forte.
-6. Em A, clique em **Iniciar acesso**. O ID de seis números aparecerá na tela.
-7. Em B, no painel CLIENTE, digite o ID de A e, se o modo for Não assistido, a senha. Clique em **Conectar**.
-8. Se o modo for Assistido, em A aparecerá uma solicitação como **Conexão solicitada por [cliente]. Permitir acesso?**. Clique em **Sim**.
-9. Em B, a janela de visualização abrirá com a tela de A. Selecione o monitor e o áudio, se desejado; mouse, teclado e áudio devem funcionar.
-10. Para encerrar, em B clique em **Desconectar**. Em A clique em **Parar acesso** ou feche o App.
+1. No computador A, inicie a API (ou em qualquer máquina da rede) com `npm start`.
+2. No computador A, execute `publish\IniciarApp.bat`; no computador B, execute o mesmo `publish\IniciarApp.bat`.
+3. Nos Apps de A e B, preencha **URL da API** com `http://IP-da-api:3000` e clique em **Conectar servidor**.
+4. Em A, no painel HOST, escolha **Assistido** ou **Não assistido**. Se escolher Não assistido, defina uma senha forte.
+5. Em A, clique em **Iniciar acesso**. O ID de seis números aparecerá na tela.
+6. Em B, no painel CLIENTE, digite o ID de A e, se o modo for Não assistido, a senha. Clique em **Conectar**.
+7. Se o modo for Assistido, em A aparecerá uma solicitação como **Conexão solicitada por [cliente]. Permitir acesso?**. Clique em **Sim**.
+8. Em B, a janela de visualização abrirá com a tela de A. Selecione o monitor e o áudio, se desejado; mouse, teclado e áudio devem funcionar.
+9. Para encerrar, em B clique em **Desconectar**. Em A clique em **Parar acesso** ou feche o App.
 
-## 4. Teste com um computador
+## 5. Teste com um computador
 
-1. Execute `publish\IniciarServidor.bat` e deixe-o aberto.
+1. Inicie a API localmente (`cd api && npm start`).
 2. Execute `publish\IniciarApp.bat`.
-3. Use `127.0.0.1` no campo Servidor e `7000` na Porta; clique em **Conectar servidor**.
+3. Use `http://localhost:3000` no campo **URL da API** e clique em **Conectar servidor**.
 4. Escolha um modo de host e clique em **Iniciar acesso**.
 
-Esse teste valida o servidor, a conexão e o registro do host; o ID deve aparecer. Sem um segundo dispositivo, não existe conexão remota real nem visualização completa.
+Esse teste valida a API, a conexão e o registro do host; o ID deve aparecer. Sem um segundo dispositivo, não existe conexão remota real nem visualização completa.
 
-## 5. Firewall do Windows
+## 6. Verificação de atualização
 
-Permita o acesso quando o Windows perguntar. Libere TCP `7000` no computador do servidor e TCP `5050` no computador host, de preferência apenas no perfil de rede local.
+Ao conectar, o App consulta `GET /api/update/latest?currentVersion=X`. Se a API tiver uma versão mais nova no catálogo (`api\src\update.js` — valores fictícios que o usuário deve editar), o App mostra **"Nova versão X disponível"**. Sem atualização, nada é exibido.
 
-## 6. Problemas comuns
+## 7. Firewall do Windows
+
+Permita o acesso quando o Windows perguntar. Libere TCP `3000` na máquina que roda a API e TCP `5050` no computador host, de preferência apenas no perfil de rede local. A porta `7000` não é mais usada.
+
+## 8. Problemas comuns
 
 | Problema | Solução |
 | --- | --- |
-| Não conecta no servidor | Confira IP, porta `7000`, servidor em execução e firewall. |
-| ID não encontrado ou offline | O host pode não ter iniciado o acesso, pode estar parado ou os Apps podem usar servidores diferentes. |
+| Não conecta na API | Confira a **URL da API** (ex.: `http://IP:3000`), a API em execução (`npm start`) e o firewall na porta `3000`. |
+| A API responde 503 | Banco não configurado ou indisponível; configure `DATABASE_URL` ou as variáveis `DB_*` (ver `api\README.md`). |
+| ID não encontrado ou offline | O host pode não ter iniciado o acesso, pode estar parado ou os Apps podem usar APIs diferentes. |
 | Senha incorreta | Confirme a senha do modo Não assistido. |
-| Muitas tentativas | Aguarde 60 segundos; o servidor aplica proteção anti brute force. |
-| Tela preta | Confira as 7 DLLs em `publish\app\ffmpeg`. |
+| Muitas tentativas | Aguarde 60 segundos; a API aplica proteção anti brute force por IP. |
+| Tela preta | Confira as DLLs em `publish\app\ffmpeg`. |
 | Áudio não funciona | Marque ou desmarque **Áudio** na janela de visualização e confira o dispositivo de áudio do host. |
 
-## 7. Onde está a configuração
+## 9. Onde está a configuração
 
-O App salva dados em `%APPDATA%\RemoteEternal`. O arquivo `host.id` guarda o ID do host e `config.txt` guarda a configuração do servidor e da porta. A senha nunca é persistida.
+O App salva dados em `%APPDATA%\RemoteEternal`. O arquivo `host.id` guarda o ID do host e `config.txt` guarda a URL da API (`apiUrl`) e a porta do listener. A senha nunca é persistida.

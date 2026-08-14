@@ -1,5 +1,18 @@
 # JOURNAL.md
 
+## 2026-08-14 — Migração para API Node.js
+
+Decisão: substituir o `RemoteEternal.Server` (C#, TCP + LiteDB) como plano de controle por uma **API Node.js** (`api/`, Express + WebSocket + PostgreSQL). O App C# fala com a API via HTTP REST + WebSocket; o servidor C# permanece no código apenas como legado para os testes de integração C#. Repositórios GitHub separados: `remoteEternal-api` (conteúdo de `api/`) e `remoteEternal-app` (raiz com `src/`, `docs/`, `tests/` e solution).
+
+Etapas executadas:
+
+- API: Express + WebSocket (`/ws`), rotas `register`, `online`, `salt`, `lookup` (com rate limit e validação do verifier) e `update/latest`; `HostRegistry` em memória; pool `pg` (Aiven `DB_*` com CA ou `DATABASE_URL` local); testes unitários e de integração com Postgres.
+- App: `ServerConnection` reescrito para `HttpClient` + `ClientWebSocket`; `MainWindow` com campo "URL da API" e verificação de atualização ao abrir; host anuncia-se online por HTTP e mantém canal WS; cliente usa salt + lookup.
+- Banco: PostgreSQL no Aiven (`remoteeternalapi`), certificado CA em `api\config\aiven-ca.pem` (público, versionado no repo da API); pool max 5, min 1.
+- Docs: AGENTS, ARCHITECTURE, TESTANDO, OPERATING, SECURITY, INVENTORY e CHANGELOG atualizados para o novo modelo.
+
+Pendências: validação manual do fluxo end-to-end em 2 máquinas (API em uma máquina da rede, dois Apps); deploy da API no Render com HTTPS e do banco no Aiven; heartbeat efetivo com lease e `hostOffline` explícito; testes de integração da API com `DATABASE_URL` real; reindexação do RAG após a atualização das docs.
+
 ## 2026-08-14 — Migração para acesso por ID
 
 Decisão do usuário: substituir o modelo de contas e login por um modelo estilo TeamViewer. Cada host recebe um ID único de seis dígitos; o cliente informa o ID (e, no modo não assistido, a senha); no modo assistido, o host aprova manualmente cada conexão. O servidor atua como diretório de hosts e coordena o encontro, mas a mídia continua direta entre host e cliente.

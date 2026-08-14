@@ -16,15 +16,15 @@ Tela, áudio e entrada remota são capacidades independentes. Cada sessão deve 
 - Mensagens recebidas são não confiáveis e devem ter limites de tamanho, tempo, taxa e estado.
 - O plano de controle e a sessão direta devem preservar confidencialidade e integridade.
 - Input remoto é uma capacidade privilegiada e deve seguir menor privilégio.
-- O servidor não deve transportar mídia sem uma decisão arquitetural explícita.
+- A API/plano de controle não deve transportar mídia sem uma decisão arquitetural explícita.
 
 ## Compatibilidade
 
-Mudanças em `RemoteEternal.Core` podem afetar simultaneamente App e Server. Primeiro altere e documente o contrato; depois atualize os consumidores de forma compatível ou introduza versionamento.
+O plano de controle é a API Node.js (`api/`, repositório `remoteEternal-api`); o App (C# WPF) e o `RemoteEternal.Core` pertencem ao repositório `remoteEternal-app`. Mudanças em `RemoteEternal.Core` podem afetar o App e o servidor C# legado. Primeiro altere e documente o contrato; depois atualize os consumidores de forma compatível ou introduza versionamento. Alterações de contrato entre App e API devem ser refletidas em ambos os repositórios.
 
 ## Operação
 
-O build deve manter .NET 8, WPF Windows x64 no App e LiteDB no Server. DLLs FFmpeg, firewall, portas e permissões são parte da operação e devem ser documentados quando alterados.
+O build do App deve manter .NET 8, WPF Windows x64. A API Node.js exige Node.js 18+ e PostgreSQL (Aiven ou local); a sessão direta continua no App/Core. DLLs FFmpeg, firewall, portas e permissões são parte da operação e devem ser documentados quando alterados. O servidor C# (`RemoteEternal.Server`) é legado e não deve ser publicado como peça ativa.
 
 ## Known gotchas
 
