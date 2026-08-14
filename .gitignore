@@ -1,0 +1,32 @@
+# remoteEternal-app — raiz do produto (WPF + Server C# + docs).
+# O conteúdo de api/ pertence ao repositório remoteEternal-api.
+api/
+
+# Dependências e diretórios de build
+node_modules/
+bin/
+obj/
+publish/
+libs/
+
+# Diretórios locais do ambiente de trabalho (não fazem parte do produto)
+lancedb/
+models/
+.tools/
+.opencode/
+
+# Arquivos locais de dados / ambiente
+*.db
+*.db-journal
+.env
+.DS_Store
+
+# Exemplo local do usuário (fora do produto)
+connect.js
+
+# Certificado CA do Aiven fica no repo da API; não deve entrar no repo do app.
+aiven-ca.pem
+
+# opencode.json contém segredos pessoais (API keys do provider local); é config
+# pessoal do opencode e não deve ser versionado.
+opencode.json
