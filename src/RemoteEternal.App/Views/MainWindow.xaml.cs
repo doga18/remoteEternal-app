@@ -15,6 +15,12 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Registra os handlers SOMENTE após a materialização completa do XAML.
+        // Se declarados no XAML, o evento Checked de RadAssisted (IsChecked="True")
+        // dispararia durante a desserialização, antes de RadUnassisted,
+        // TxtHostPassLabel e TxtHostPass existirem, causando NullReferenceException.
+        RadAssisted.Checked += OnAccessModeChanged;
+        RadUnassisted.Checked += OnAccessModeChanged;
         TxtApiUrl.Text = AppState.ApiUrl;
         UpdateHostPasswordVisibility();
         _host.StatusChanged += msg => Dispatcher.Invoke(() => TxtHostStatus.Text = msg);

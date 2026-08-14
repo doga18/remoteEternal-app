@@ -97,8 +97,8 @@
                         <TextBlock Text="SEU ID" Foreground="{StaticResource MutedBrush}" Margin="0,16,0,0"/>
                         <TextBlock x:Name="TxtHostId" Text="—" FontFamily="Consolas" FontSize="36" FontWeight="Bold" Foreground="{StaticResource TextBrush}"/>
                         <TextBlock Text="Modo de acesso" Foreground="{StaticResource MutedBrush}" Margin="0,14,0,0"/>
-                        <RadioButton x:Name="RadAssisted" Content="Assistido (exige aprovação)" GroupName="AccessMode" IsChecked="True" Foreground="{StaticResource TextBrush}" Margin="0,4,0,0" Checked="OnAccessModeChanged"/>
-                        <RadioButton x:Name="RadUnassisted" Content="Não assistido (ID + senha)" GroupName="AccessMode" Foreground="{StaticResource TextBrush}" Margin="0,2,0,0" Checked="OnAccessModeChanged"/>
+                        <RadioButton x:Name="RadAssisted" Content="Assistido (exige aprovação)" GroupName="AccessMode" IsChecked="True" Foreground="{StaticResource TextBrush}" Margin="0,4,0,0"/>
+                        <RadioButton x:Name="RadUnassisted" Content="Não assistido (ID + senha)" GroupName="AccessMode" Foreground="{StaticResource TextBrush}" Margin="0,2,0,0"/>
                         <TextBlock x:Name="TxtHostPassLabel" Text="Senha de acesso" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,0"/>
                         <PasswordBox x:Name="TxtHostPass"/>
                         <Button x:Name="BtnToggleHost" Content="Iniciar acesso" Click="OnToggleHostClick"/>
