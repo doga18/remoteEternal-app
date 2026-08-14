@@ -53,7 +53,8 @@ public partial class ViewerWindow : Window
             }
             catch (Exception ex)
             {
-                ShowError("Falha ao conectar: " + ex.Message);
+                ShowError("Falha ao conectar: " + ex.Message +
+                    ". Confirme que o host está na mesma rede (LAN) e que a porta de acesso está liberada no firewall.");
             }
         };
     }

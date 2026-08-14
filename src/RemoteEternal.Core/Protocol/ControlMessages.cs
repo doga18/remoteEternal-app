@@ -77,12 +77,25 @@ public static class HostAccess
 public sealed record RegisterHostRequest(string DeviceName, string Os);
 public sealed record RegisterHostResult(bool Ok, string? HostId, string? Error);
 
-// Host informa que está online (disponível para conexão), com porta de escuta e modo de acesso.
-// AccessMode: "assisted" ou "unassisted" (veja HostAccess acima).
-// Salt/Verifier são obrigatórios quando AccessMode == "unassisted" (senha do host definida pelo usuário,
-// hasheada com PasswordHasher do Core — o App gera salt e verifier localmente e envia base64).
-// Salt/Verifier devem ser null quando "assisted".
-public sealed record HostOnlineRequest(string HostId, string DeviceName, string Os, int ListenPort, string AccessMode, string? Salt, string? Verifier);
+/// <summary>Host informa que está online, disponível para conexão, com porta de escuta e modo de acesso.</summary>
+/// <remarks>
+/// AccessMode é "assisted" ou "unassisted" (veja <see cref="HostAccess"/>).
+/// Salt e Verifier são obrigatórios quando AccessMode == "unassisted" (senha do host definida pelo usuário,
+/// hasheada com PasswordHasher do Core — o App gera salt e verifier localmente e envia base64) e devem ser
+/// nulos quando AccessMode == "assisted".
+/// AdvertisedAddress é opcional e serve somente para roteamento da sessão direta: deve conter o IPv4
+/// alcançável pelo cliente. Não é uma credencial; a autorização continua protegida pelo token da sessão
+/// e, quando aplicável, pela aprovação manual do host.
+/// </remarks>
+public sealed record HostOnlineRequest(
+    string HostId,
+    string DeviceName,
+    string Os,
+    int ListenPort,
+    string AccessMode,
+    string? Salt,
+    string? Verifier,
+    string? AdvertisedAddress = null);
 public sealed record HostOnlineResult(bool Ok, string? Error);
 
 // Cliente pede o salt do host para computar o AuthHash (apenas no modo unassisted).

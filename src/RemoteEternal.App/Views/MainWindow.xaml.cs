@@ -165,31 +165,27 @@ public partial class MainWindow : Window
             }
 
             string hostId = await EnsureHostIdAsync();
-            var online = await _conn.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os, AppState.ListenPort, mode, saltB64, verifierB64);
-            if (!online.Ok)
-            {
-                // HostId persistido pode não existir mais no servidor (banco recriado);
-                // registra um novo ID e tenta publicar novamente.
-                if (online.Error?.Contains("ID não encontrado") == true)
-                {
-                    var reg = await _conn.RegisterHostAsync(AppState.DeviceName, AppState.Os);
-                    if (!reg.Ok || string.IsNullOrEmpty(reg.HostId))
-                    {
-                        MessageBox.Show(this, reg.Error ?? "Falha ao registrar host", "RemoteEternal", MessageBoxButton.OK, MessageBoxImage.Error);
-                        return;
-                    }
-                    AppState.SaveHostId(reg.HostId!);
-                    hostId = reg.HostId!;
-                    online = await _conn.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os, AppState.ListenPort, mode, saltB64, verifierB64);
-                }
-                if (!online.Ok)
-                {
-                    MessageBox.Show(this, online.Error ?? "Falha ao publicar host", "RemoteEternal", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
-            }
 
+            // Endereço anunciado vai apenas no request autenticado de anúncio;
+            // nunca é logado nem exibido na UI.
+            string? advertisedAddress = await NetworkAddressResolver.ResolveAsync(_conn.ApiUrl ?? AppState.ApiUrl);
+            if (advertisedAddress is null)
+                TxtHostStatus.Text = "Endereço de rede não detectado; clientes em outras máquinas podem não alcançar este host.";
+
+            // Inicia o listener ANTES de anunciar: o host só fica online se a porta
+            // direta estiver de fato escutando. Se o anúncio falhar, o listener é
+            // parado (rollback) e o WebSocket não é conectado.
             await _host.StartAsync(AppState.ListenPort);
+
+            var publishedHostId = await PublishHostOnlineAsync(hostId, mode, saltB64, verifierB64, advertisedAddress);
+            if (publishedHostId is null)
+            {
+                // Anúncio falhou: não mantém listener ativo sem host online.
+                await _host.StopAsync();
+                return;
+            }
+            hostId = publishedHostId;
+
             try
             {
                 await _conn.HostWsConnectAsync(hostId);
@@ -225,6 +221,43 @@ public partial class MainWindow : Window
             throw new InvalidOperationException(reg.Error ?? "Falha ao registrar host");
         AppState.SaveHostId(reg.HostId!);
         return reg.HostId!;
+    }
+
+    /// <summary>
+    /// Publica o host como online e devolve o HostId efetivamente publicado
+    /// (um novo ID caso o persistido não exista mais no servidor) ou null em caso
+    /// de falha, após exibir o erro. O listener é iniciado ANTES pelo chamador;
+    /// quando este método falha, o chamador para o listener para não manter um
+    /// host escutando sem estar anunciado.
+    /// </summary>
+    private async Task<string?> PublishHostOnlineAsync(string hostId, string mode, string? saltB64, string? verifierB64, string? advertisedAddress)
+    {
+        var online = await _conn!.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os,
+            AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress);
+        if (!online.Ok)
+        {
+            // HostId persistido pode não existir mais no servidor (banco recriado);
+            // registra um novo ID e tenta publicar novamente.
+            if (online.Error?.Contains("ID não encontrado") == true)
+            {
+                var reg = await _conn.RegisterHostAsync(AppState.DeviceName, AppState.Os);
+                if (!reg.Ok || string.IsNullOrEmpty(reg.HostId))
+                {
+                    MessageBox.Show(this, reg.Error ?? "Falha ao registrar host", "RemoteEternal", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return null;
+                }
+                AppState.SaveHostId(reg.HostId!);
+                hostId = reg.HostId!;
+                online = await _conn.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os,
+                    AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress);
+            }
+            if (!online.Ok)
+            {
+                MessageBox.Show(this, online.Error ?? "Falha ao publicar host", "RemoteEternal", MessageBoxButton.OK, MessageBoxImage.Error);
+                return null;
+            }
+        }
+        return hostId;
     }
 
     private async Task StopHostAsync()

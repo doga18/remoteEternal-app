@@ -70,9 +70,9 @@ public sealed class ServerConnection : IAsyncDisposable
         HttpPostAsync<RegisterHostResult>("api/hosts/register", new { deviceName, os });
 
     public Task<HostOnlineResult> HostOnlineAsync(string hostId, string deviceName, string os,
-        int listenPort, string accessMode, string? saltB64, string? verifierB64) =>
+        int listenPort, string accessMode, string? saltB64, string? verifierB64, string? advertisedAddress = null) =>
         HttpPostAsync<HostOnlineResult>("api/hosts/online",
-            new { hostId, deviceName, os, listenPort, accessMode, salt = saltB64, verifier = verifierB64 });
+            new { hostId, deviceName, os, listenPort, accessMode, salt = saltB64, verifier = verifierB64, advertisedAddress });
 
     public Task<GetHostSaltResult> GetHostSaltAsync(string hostId) =>
         HttpGetAsync<GetHostSaltResult>($"api/hosts/{Uri.EscapeDataString(hostId)}/salt");
