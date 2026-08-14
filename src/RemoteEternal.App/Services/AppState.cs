@@ -18,7 +18,7 @@ public static class AppState
     /// <summary>ID público de 6 dígitos do host, atribuído pelo servidor e persistido localmente.</summary>
     public static string HostId { get; private set; } = "";
 
-    public static string ApiUrl { get; set; } = "http://localhost:3000";
+    public static string ApiUrl { get; set; } = "https://remoteeternal-api.onrender.com";
     public static int ListenPort { get; set; } = 5050;
     public static string LastUsername { get; set; } = "";
 

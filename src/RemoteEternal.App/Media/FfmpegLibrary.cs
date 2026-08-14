@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using FFmpeg.AutoGen;
+using RemoteEternal.App.Services;
 
 namespace RemoteEternal.App.Media;
 
@@ -23,7 +24,19 @@ public static class FfmpegLibrary
     {
         if (_initialized) return;
         string path = FfmpegPath;
-        ExtractEmbeddedIfNeeded(path);
+        try
+        {
+            ExtractEmbeddedIfNeeded(path);
+        }
+        catch (Exception ex)
+        {
+            // Falha ao extrair as DLLs embutidas (ex.: pasta sem permissão de escrita).
+            // Não derruba o app: registra o aviso em %APPDATA%\RemoteEternal\error.log
+            // e segue sem FFmpeg — o cliente mostra "vídeo indisponível" no ViewerWindow.
+            // Sessão de controle (host/cliente) não depende de FFmpeg.
+            ErrorLog.Write(ex, "Aviso: falha ao extrair DLLs FFmpeg");
+            return;
+        }
         if (Directory.Exists(path))
         {
             ffmpeg.RootPath = path;

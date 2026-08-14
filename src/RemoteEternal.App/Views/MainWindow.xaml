@@ -62,7 +62,7 @@
                     <TextBlock Text="RemoteEternal" FontSize="26" FontWeight="Bold" Foreground="{StaticResource TextBrush}" HorizontalAlignment="Center"/>
                     <TextBlock Text="Acesso remoto simples e ilimitado" FontSize="12" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" Margin="0,2,0,18"/>
                     <TextBlock Text="URL da API" Foreground="{StaticResource MutedBrush}"/>
-                    <TextBox x:Name="TxtApiUrl" Text="http://localhost:3000"/>
+                    <TextBox x:Name="TxtApiUrl" Text="https://remoteeternal-api.onrender.com"/>
                     <TextBlock x:Name="TxtUpdateInfo" Foreground="#FF9DD6FF" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                     <TextBlock x:Name="TxtConnectError" Foreground="#FFFF8A80" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                     <Button x:Name="BtnConnectServer" Content="Conectar servidor" Click="OnConnectServerClick"/>
