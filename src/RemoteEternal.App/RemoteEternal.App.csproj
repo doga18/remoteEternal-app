@@ -35,4 +35,30 @@
     <EmbeddedResource Include="..\..\libs\ffmpeg\bin\*.dll" LogicalName="ffmpeg.%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- Publicação single-file: ScreenRecorderLib.dll é um assembly mixed-mode (C++/CLI, COR20 sem ILONLY).
+       O runtime .NET não suporta carregar mixed-mode de dentro do bundle single-file
+       (System.BadImageFormatException em SessionHost.StopCapture/StopAsync).
+       Copia a DLL do pacote para a saída ao lado do exe e exclui do bundle.
+       Nota: versão deve acompanhar o PackageReference de ScreenRecorderLib acima. -->
+  <ItemGroup Condition="'$(PublishSingleFile)' == 'true' And Exists('$(NuGetPackageRoot)screenrecorderlib\6.6.0\build\x64\ScreenRecorderLib.dll')">
+    <None Include="$(NuGetPackageRoot)screenrecorderlib\6.6.0\build\x64\ScreenRecorderLib.dll"
+          Link="ScreenRecorderLib.dll"
+          CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true"
+          Visible="false" />
+  </ItemGroup>
+
+  <!-- A mesma DLL também é injetada como Reference (mixed-mode) pelo ScreenRecorderLib.targets do pacote.
+       Sem Private=false, ela entraria em ReferenceCopyLocalPaths e seria embutida no bundle (duplicando a
+       None acima, que fica fora do bundle). Isso impede o copy-local apenas na publicação single-file. -->
+  <Target Name="MarkScreenRecorderLibNotCopyLocal"
+          AfterTargets="InjectReference"
+          Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <Reference Update="ScreenRecorderLib">
+        <Private>false</Private>
+      </Reference>
+    </ItemGroup>
+  </Target>
+
 </Project>
