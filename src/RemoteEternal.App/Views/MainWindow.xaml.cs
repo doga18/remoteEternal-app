@@ -308,7 +308,7 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    TxtUpdateInfo.Text = $"Nova versão {update.Version} disponível. Baixe em: {update.Url}";
+                    TxtUpdateInfo.Text = BuildUpdateMessage(update);
                     TxtUpdateInfo.Visibility = Visibility.Visible;
                 });
             }
@@ -318,6 +318,15 @@ public partial class MainWindow : Window
             // Atualização é opcional; falha não impede o uso do App.
         }
     }
+    private static string BuildUpdateMessage(UpdateInfo update)
+    {
+        var details = new List<string>();
+        if (update.FileCount > 0) details.Add($"{update.FileCount} arquivos");
+        if (update.SizeBytes > 0) details.Add($"~{update.SizeBytes / 1_000_000.0:0.0} MB");
+        string suffix = details.Count > 0 ? $" ({string.Join(", ", details)})" : "";
+        return $"Nova versão {update.Version} disponível{suffix}. Baixe em: {update.Url}";
+    }
+
     private static bool IsValidHostId(string id) =>
         id.Length == 6 && id.All(char.IsAsciiDigit);
 

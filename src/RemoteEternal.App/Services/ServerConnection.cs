@@ -7,7 +7,7 @@ using RemoteEternal.Core.Protocol;
 
 namespace RemoteEternal.App.Services;
 
-public sealed record UpdateInfo(string Version, string Url, string Notes);
+public sealed record UpdateInfo(string Version, string Url, string Notes, long SizeBytes, string Sha256, int FileCount);
 
 public sealed class ServerConnection : IAsyncDisposable
 {
@@ -89,7 +89,13 @@ public sealed class ServerConnection : IAsyncDisposable
         var response = await HttpGetAsync<LatestUpdateResponse>(
             $"api/update/latest?currentVersion={Uri.EscapeDataString(currentVersion)}").ConfigureAwait(false);
         if (!response.Ok || response.Update is null) return null;
-        return new UpdateInfo(response.Update.Version ?? "", response.Update.Url ?? "", response.Update.Notes ?? "");
+        return new UpdateInfo(
+            response.Update.Version ?? "",
+            response.Update.Url ?? "",
+            response.Update.Notes ?? "",
+            response.Update.SizeBytes ?? 0,
+            response.Update.Sha256 ?? "",
+            response.Update.FileCount ?? 0);
     }
 
     public async Task HostWsConnectAsync(string hostId, CancellationToken ct = default)
@@ -247,5 +253,5 @@ public sealed class ServerConnection : IAsyncDisposable
     }
 
     private sealed record LatestUpdateResponse(bool Ok, LatestUpdate? Update, string? Error);
-    private sealed record LatestUpdate(string? Version, string? Url, string? Notes);
+    private sealed record LatestUpdate(string? Version, string? Url, string? Notes, long? SizeBytes, string? Sha256, int? FileCount);
 }
