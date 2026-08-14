@@ -36,7 +36,7 @@ O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plan
 | `src/schema.sql` | Pronto | `CREATE TABLE IF NOT EXISTS hosts`. |
 | `src/registry.js` | Pronto | `HostRegistry` em memória: hosts online e pendências de lookup (timeout 20 s). |
 | `src/rateLimit.js` | Pronto | `RateLimiter` por IP: 5 falhas de lookup em 60 s. |
-| `src/update.js` | Pronto | `CURRENT_VERSION` e catálogo fictício de versões (`getLatestUpdate`). |
+| `src/update.js` | Pronto | Catálogo `RELEASES` com manifest real (`version`, `url`, `sizeBytes`, `sha256`, `fileCount`, `notes`); `CURRENT_VERSION` é derivada (`getLatestUpdate`). |
 | `src/validate.js` | Pronto | Validação de ID (6 dígitos), base64, porta e nomes. |
 | `tests/update.test.js`, `tests/rateLimit.test.js` | Pronto | Testes unitários (12 no total). |
 | `tests/api.integration.test.js` | Pronto | Integração com Postgres; exige `DATABASE_URL`. |
@@ -141,7 +141,7 @@ O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plan
 - [x] Token de sessão por conexão.
 - [x] Testes automatizados do Core e integração do servidor C# legado (13 testes).
 - [x] Testes unitários da API Node (12) + integração com Postgres (requer `DATABASE_URL`).
-- [x] FFmpeg provisionado em `publish\app\ffmpeg` (DLLs nativas).
+- [x] FFmpeg provisionado em `dist\RemoteEternal\ffmpeg` (DLLs nativas).
 - [ ] Validar manualmente o fluxo end-to-end em 2 máquinas: API na rede, WPF, captura, vídeo, áudio, input e encerramento.
 - [ ] Deploy da API (Render/Aiven) e teste do rate limit e HTTPS em produção.
 - [ ] Heartbeat/lease e `hostOffline` explícito na API.

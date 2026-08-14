@@ -20,7 +20,7 @@ O App fala com a API Node.js via **HTTP REST + WebSocket** (não existe mais ser
 - `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier}` → `{ok}` — anuncia o host online e registra o modo de acesso (assisted/unassisted) e as credenciais do modo não assistido.
 - `GET /api/hosts/:hostId/salt` → `{ok, accessMode, salt}` — consulta o salt e o modo do host.
 - `POST /api/hosts/:hostId/lookup` `{authHash}` → `{ok, ip, port, sessionToken}` — encontro entre cliente e host; aguarda a decisão do host por até 20 segundos.
-- `GET /api/update/latest?currentVersion=X` → `{ok, update: {version, url, notes} | null}` — verificação de atualização do App.
+- `GET /api/update/latest?currentVersion=X` → `{ok, update: {version, url, sizeBytes, sha256, fileCount, notes} | null}` — verificação de atualização do App.
 
 WebSocket em `/ws` (usado **apenas pelo host**):
 
@@ -45,7 +45,7 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 - `src/schema.sql`: `CREATE TABLE IF NOT EXISTS hosts`.
 - `src/registry.js`: diretório em memória de hosts online (`HostRegistry`) e de pendências de lookup.
 - `src/rateLimit.js`: `RateLimiter` — 5 falhas de lookup por IP em 60 segundos.
-- `src/update.js`: `CURRENT_VERSION` e catálogo de versões do App (`getLatestUpdate`).
+- `src/update.js`: catálogo `RELEASES` com manifest (`version, url, sizeBytes, sha256, fileCount, notes`); `CURRENT_VERSION` derivada; hospedagem GitHub Releases.
 - `src/validate.js`: validação de ID, base64, porta e nomes.
 - `tests/`: unitários (`update`, `rateLimit`) e integração com Postgres (`api.integration.test.js`).
 
@@ -93,7 +93,7 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 
 ## Mídia
 
-O host usa ScreenRecorderLib e configura vídeo H.264 e áudio conforme a sessão. O fluxo é encaminhado por `SessionStream`. O cliente usa FFmpeg para decodificar vídeo e converter áudio para PCM, reproduzido por NAudio. A distribuição publicada contém as DLLs FFmpeg em `publish\app\ffmpeg`.
+O host usa ScreenRecorderLib e configura vídeo H.264 e áudio conforme a sessão. O fluxo é encaminhado por `SessionStream`. O cliente usa FFmpeg para decodificar vídeo e converter áudio para PCM, reproduzido por NAudio. A distribuição publicada é a pasta `dist\RemoteEternal`, com as DLLs FFmpeg em `dist\RemoteEternal\ffmpeg`.
 
 Buffers precisam ter limites e preservar o tamanho real dos blocos. Reinicializações por troca de monitor, alteração de áudio ou falha devem cancelar o pipeline anterior antes de iniciar o próximo.
 
@@ -109,6 +109,6 @@ A evolução para acesso pela internet, NAT traversal, relay, heartbeat efetivo 
 
 ## Build e distribuição
 
-- Repositório **remoteEternal-app**: solution `RemoteEternal.sln`; App `net8.0-windows`, WPF, x64; Core `net8.0`; testes xUnit. Publicação em `publish\app` e `publish\IniciarApp.bat`. `publish\app\ffmpeg` contém as DLLs nativas necessárias para mídia.
+- Repositório **remoteEternal-app**: solution `RemoteEternal.sln`; App `net8.0-windows`, WPF, x64; Core `net8.0`; testes xUnit. Distribuição self-contained Windows x64 em `dist\RemoteEternal`, com `RemoteEternal.exe`, `ScreenRecorderLib.dll` ao lado do executável, runtime .NET e `dist\RemoteEternal\ffmpeg` com as DLLs nativas necessárias para mídia. O ZIP é `dist\RemoteEternal-1.0.0-win-x64.zip`.
 - Repositório **remoteEternal-api**: Node.js 18+; `npm install` e `npm start` (porta `PORT`, default `3000`); banco PostgreSQL (Aiven ou local) via `DATABASE_URL` ou `DB_*`; testes com `node --test`. Publicação/deploy independente (ex.: Render).
 - Firewall, portas e permissões devem ser validados em Windows x64.

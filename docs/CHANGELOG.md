@@ -1,5 +1,13 @@
 # CHANGELOG.md
 
+## 2026-08-14 — Distribuição em pasta e manifest de update
+
+- Distribuição atual em pasta self-contained Windows x64: `dist\RemoteEternal`, com `RemoteEternal.exe`, `ScreenRecorderLib.dll` mixed-mode ao lado do executável, runtime .NET e `ffmpeg\` com sete DLLs nativas; o ZIP é `dist\RemoteEternal-1.0.0-win-x64.zip`.
+- Corrigido o empacotamento do ScreenRecorderLib: a assembly mixed-mode fica fora de bundle e ao lado do executável.
+- A janela principal inicializa offline, sem depender da API para abrir.
+- O manifest de update agora informa versão, tamanho, SHA-256 e número de arquivos; `CURRENT_VERSION` é derivada do catálogo `RELEASES` hospedado no GitHub Releases.
+- Adicionado `docs/CODE_SIGNING.md` com o processo de assinatura dos arquivos PE da distribuição e geração do ZIP após a assinatura.
+
 ## 2026-08-14 — Migração do plano de controle para API Node.js
 
 - Plano de controle substituído: o `RemoteEternal.Server` (C#, TCP + LiteDB) deixou de ser o componente ativo e foi substituído pela **API Node.js** (`api/`, Express + WebSocket + PostgreSQL). O App agora fala com a API via HTTP REST + WebSocket.
@@ -8,7 +16,7 @@
 - Banco PostgreSQL: formato Aiven (`DB_HOST`, `DB_PORT` default 14673, `DB_DATABASE` default `remoteeternalapi`, `DB_USER`, `DB_PASS`) com certificado CA em `api\config\aiven-ca.pem` (`ssl rejectUnauthorized true`); também aceita `DATABASE_URL` (Postgres local). Pool reduzido (max 5, min 1).
 - App (C#): `ServerConnection` reescrito para `HttpClient` + `ClientWebSocket`; `MainWindow` com campo "URL da API"; verificação de atualização ao abrir via `GET /api/update/latest` ("Nova versão X disponível"). Fluxo do host por HTTP/WS; fluxo do cliente via salt + lookup.
 - `RemoteEternal.Server` (C#) permanece como legado no código, apenas exercitado pelos testes de integração C#; não é mais publicado nem documentado como peça ativa.
-- Sessão direta inalterada: `SecureFrameChannel` AES-GCM com chaves por direção, `SessionSaltV1`, info `"re-session"`, `SessionHost`/`SessionClient`/`ViewerWindow`, ScreenRecorderLib e FFmpeg em `publish\app\ffmpeg`.
+- Sessão direta inalterada: `SecureFrameChannel` AES-GCM com chaves por direção, `SessionSaltV1`, info `"re-session"`, `SessionHost`/`SessionClient`/`ViewerWindow`, ScreenRecorderLib e FFmpeg em `dist\RemoteEternal\ffmpeg`.
 - Testes: 13 testes C# (8 unitários + 5 integração do servidor legado) e API Node com 12 testes unitários (update, rateLimit) + 1 de integração (requer `DATABASE_URL`).
 
 ## 2026-08-14 — Novo modelo de acesso por ID (TeamViewer-like)

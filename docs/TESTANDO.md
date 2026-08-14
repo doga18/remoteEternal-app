@@ -12,7 +12,7 @@ A sessão direta usa a porta `5050` no host. A porta `7000` do antigo servidor C
 
 - Dois computadores Windows x64 na mesma rede local para o teste completo.
 - A API Node.js em execução em uma máquina acessível pela rede (veja abaixo).
-- O App publicado (pasta `publish\app`) nos dois computadores.
+- O App publicado (pasta `dist\RemoteEternal`) nos dois computadores.
 - Permissão para liberar os programas no Firewall do Windows.
 - O IP da máquina que executa a API.
 
@@ -55,7 +55,7 @@ Esse teste valida a API, a conexão e o registro do host; o ID deve aparecer. Se
 
 ## 6. Verificação de atualização
 
-Ao conectar, o App consulta `GET /api/update/latest?currentVersion=X`. Se a API tiver uma versão mais nova no catálogo (`api\src\update.js` — valores fictícios que o usuário deve editar), o App mostra **"Nova versão X disponível"**. Sem atualização, nada é exibido.
+Ao conectar, o App consulta `GET /api/update/latest?currentVersion=X`. A API usa o catálogo `RELEASES`, com manifest real contendo `version`, `url`, `sizeBytes`, `sha256`, `fileCount` e `notes`; a release 1.0.0 está hospedada no GitHub Releases em `https://github.com/doga18/remoteEternal-app/releases/download/v1.0.0/RemoteEternal-1.0.0-win-x64.zip`, com `sizeBytes=151199803`, `fileCount=480` e SHA-256 `8168a0f7adf120b437d4bdd38b7c455d11f18c92d4bf23ffb59af0216bf95ee3`. Quando há atualização, o App apenas informa a versão, o número de arquivos, o tamanho aproximado e a URL para download; ele não baixa o arquivo automaticamente. Sem atualização, nada é exibido.
 
 ## 7. Firewall do Windows
 
@@ -70,7 +70,7 @@ Permita o acesso quando o Windows perguntar. Libere TCP `3000` na máquina que r
 | ID não encontrado ou offline | O host pode não ter iniciado o acesso, pode estar parado ou os Apps podem usar APIs diferentes. |
 | Senha incorreta | Confirme a senha do modo Não assistido. |
 | Muitas tentativas | Aguarde 60 segundos; a API aplica proteção anti brute force por IP. |
-| Tela preta | Confira as DLLs em `publish\app\ffmpeg`. |
+| Tela preta | Confira as DLLs em `dist\RemoteEternal\ffmpeg`. |
 | Áudio não funciona | Marque ou desmarque **Áudio** na janela de visualização e confira o dispositivo de áudio do host. |
 
 ## 9. Onde está a configuração

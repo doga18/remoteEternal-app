@@ -1,5 +1,9 @@
 # JOURNAL.md
 
+## 2026-08-14 — Distribuição em pasta e manifest de update
+
+A distribuição passou a ser uma pasta self-contained Windows x64 em `dist\RemoteEternal`, com `ScreenRecorderLib.dll` mixed-mode ao lado de `RemoteEternal.exe` e as sete DLLs FFmpeg em `dist\RemoteEternal\ffmpeg`. O contrato de atualização passou a usar um manifest real com versão, URL, tamanho, SHA-256 e número de arquivos; a aplicação apenas informa esses dados ao detectar uma nova versão.
+
 ## 2026-08-14 — Migração para API Node.js
 
 Decisão: substituir o `RemoteEternal.Server` (C#, TCP + LiteDB) como plano de controle por uma **API Node.js** (`api/`, Express + WebSocket + PostgreSQL). O App C# fala com a API via HTTP REST + WebSocket; o servidor C# permanece no código apenas como legado para os testes de integração C#. Repositórios GitHub separados: `remoteEternal-api` (conteúdo de `api/`) e `remoteEternal-app` (raiz com `src/`, `docs/`, `tests/` e solution).

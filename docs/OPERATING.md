@@ -72,7 +72,7 @@ Os scripts de distribuição são tratados pela tarefa de release; este document
 ## Dependência nativa FFmpeg
 
 - `FfmpegLibrary.EnsureLoaded()` procura as DLLs em `<BaseDirectory>\ffmpeg` e as adiciona ao `PATH`.
-- **Estado atual: PROVISIONADO.** As DLLs estão em `publish\app\ffmpeg`:
+- **Estado atual: PROVISIONADO.** As DLLs estão em `dist\RemoteEternal\ffmpeg`:
   - `avcodec-62.dll`, `avformat-62.dll` e `avdevice-62.dll` (major 62).
   - `avutil-60.dll` (major 60).
   - `swscale-9.dll` (major 9).
@@ -82,8 +82,9 @@ Os scripts de distribuição são tratados pela tarefa de release; este document
 
 ## Distribuição
 
-- `publish\app\RemoteEternal.exe` é o App WPF.
-- `publish\app\ffmpeg\` contém as DLLs nativas necessárias para vídeo e áudio.
+- `dist\RemoteEternal\RemoteEternal.exe` é o App WPF.
+- `dist\RemoteEternal\ScreenRecorderLib.dll` é a assembly mixed-mode C++/CLI e deve ficar ao lado do executável.
+- `dist\RemoteEternal\ffmpeg\` contém as DLLs nativas necessárias para vídeo e áudio.
 - A API é distribuída independentemente (repo `remoteEternal-api`), ex.: no Render como Web Service (`npm install` / `npm start`).
 - O roteiro para iniciantes está em `docs\TESTANDO.md`.
 

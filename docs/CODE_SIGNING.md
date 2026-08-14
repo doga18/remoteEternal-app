@@ -4,7 +4,7 @@
 
 Este documento define o processo canônico para assinar e distribuir o RemoteEternal com Authenticode.
 
-O Windows Smart App Control (SAC) bloqueou `dist\app-single\RemoteEternal.exe` porque o executável não possui uma assinatura válida de um editor verificável. O artefato atual é um executável **single-file, self-contained, Windows x64**, que incorpora **sete DLLs FFmpeg** e as extrai em runtime. Não existe hoje infraestrutura de Authenticode no projeto.
+O Windows Smart App Control (SAC) pode bloquear `dist\RemoteEternal\RemoteEternal.exe` quando o executável não possui uma assinatura válida de um editor verificável. A distribuição atual é uma **pasta self-contained, Windows x64**, com `RemoteEternal.exe`, `ScreenRecorderLib.dll` e as DLLs nativas FFmpeg em `ffmpeg\`. Não é uma distribuição single-file e não há extração de FFmpeg em runtime.
 
 Quando o serviço de segurança do SAC não consegue formar uma avaliação positiva sobre um aplicativo, ele verifica sua assinatura. Um arquivo sem assinatura válida pode ser considerado não confiável e bloqueado. Para distribuição pública, use uma identidade de assinatura publicamente confiável. Um certificado self-signed não resolve esse cenário.
 
@@ -102,7 +102,7 @@ $ErrorActionPreference = 'Stop'
 $SignTool = '<SIGNTOOL_EXE_PATH>'
 $CertificateThumbprint = $env:RE_CODE_SIGNING_THUMBPRINT
 $TimestampUrl = $env:RE_TIMESTAMP_RFC3161_URL
-$Exe = 'F:\NodeJs\remoteEternal\dist\staging\publish\RemoteEternal.exe'
+$Exe = 'F:\NodeJs\remoteEternal\dist\RemoteEternal\RemoteEternal.exe'
 
 if ([string]::IsNullOrWhiteSpace($CertificateThumbprint)) { throw 'RE_CODE_SIGNING_THUMBPRINT não definido.' }
 if ([string]::IsNullOrWhiteSpace($TimestampUrl)) { throw 'RE_TIMESTAMP_RFC3161_URL não definido.' }
@@ -123,7 +123,7 @@ $SignTool = '<SIGNTOOL_EXE_PATH>'
 $PfxPath = $env:RE_CODE_SIGNING_PFX_PATH
 $PfxPassword = $env:RE_CODE_SIGNING_PFX_PASSWORD
 $TimestampUrl = $env:RE_TIMESTAMP_RFC3161_URL
-$Exe = 'F:\NodeJs\remoteEternal\dist\staging\publish\RemoteEternal.exe'
+$Exe = 'F:\NodeJs\remoteEternal\dist\RemoteEternal\RemoteEternal.exe'
 
 if ([string]::IsNullOrWhiteSpace($PfxPath)) { throw 'RE_CODE_SIGNING_PFX_PATH não definido.' }
 if ([string]::IsNullOrWhiteSpace($PfxPassword)) { throw 'RE_CODE_SIGNING_PFX_PASSWORD não definido.' }
@@ -145,16 +145,13 @@ Os comandos desta seção são um roteiro para execução futura; **não foram e
 $ErrorActionPreference = 'Stop'
 $RepoRoot = 'F:\NodeJs\remoteEternal'
 $Project = Join-Path $RepoRoot 'src\RemoteEternal.App\RemoteEternal.App.csproj'
-$DistRoot = Join-Path $RepoRoot 'dist'
+$DistRoot = Join-Path $RepoRoot 'dist\RemoteEternal'
 $WorkRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("RemoteEternal-signing-{0}" -f [guid]::NewGuid().ToString('N'))
-$FfmpegStage = Join-Path $WorkRoot 'ffmpeg\bin'
-$PublishStage = Join-Path $WorkRoot 'publish'
-$ZipStage = Join-Path $WorkRoot 'package'
-$FinalExe = Join-Path $DistRoot 'app-single\RemoteEternal.exe'
-$FinalZip = Join-Path $DistRoot 'RemoteEternal-win-x64.zip'
-$HashFile = Join-Path $DistRoot 'RemoteEternal-win-x64.sha256.txt'
-
-New-Item -ItemType Directory -Path $FfmpegStage, $PublishStage, $ZipStage -Force | Out-Null
+$FinalExe = Join-Path $DistRoot 'RemoteEternal.exe'
+$ScreenRecorderDll = Join-Path $DistRoot 'ScreenRecorderLib.dll'
+$FfmpegRoot = Join-Path $DistRoot 'ffmpeg'
+$FinalZip = Join-Path $RepoRoot 'dist\RemoteEternal-1.0.0-win-x64.zip'
+$HashFile = Join-Path $RepoRoot 'dist\RemoteEternal-1.0.0-win-x64.sha256.txt'
 
 $SignTool = Get-ChildItem -Path ${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe -File |
     Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
@@ -169,7 +166,7 @@ Fixe `$SignTool` para a versão aprovada no processo de release em vez de aceita
 ### 6.2 Verificar a assinatura atual
 
 ```powershell
-$CurrentExe = Join-Path $RepoRoot 'dist\app-single\RemoteEternal.exe'
+$CurrentExe = Join-Path $RepoRoot 'dist\RemoteEternal\RemoteEternal.exe'
 if (Test-Path -LiteralPath $CurrentExe) {
     Get-AuthenticodeSignature -LiteralPath $CurrentExe | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate, Path
     & $SignTool verify /pa /all /v $CurrentExe
@@ -178,83 +175,35 @@ if (Test-Path -LiteralPath $CurrentExe) {
 
 No estado descrito neste documento, espera-se que o executável atual não tenha um editor verificável. Essa inspeção não altera o arquivo.
 
-### 6.3 Preparar exatamente as sete DLLs FFmpeg sem alterar a origem
+### 6.3 Verificar os arquivos PE da distribuição
 
-O projeto atual embute DLLs encontradas em `libs\ffmpeg\bin` quando `PublishSingleFile=true`. Para não modificar essa origem, crie uma árvore de staging temporária do repositório e publique a partir dela. Copie os fontes necessários para `$SourceStage`, mas exclua `.git`, `bin`, `obj`, `dist`, arquivos de assinatura e qualquer segredo. Em seguida, copie somente as sete DLLs aprovadas para `libs\ffmpeg\bin` dentro desse staging.
+A distribuição atual já é uma pasta. Os artefatos PE a assinar são `dist\RemoteEternal\RemoteEternal.exe`, `dist\RemoteEternal\ScreenRecorderLib.dll` e exatamente as sete DLLs nativas FFmpeg em `dist\RemoteEternal\ffmpeg`. Não altere `libs\ffmpeg` nem gere um bundle; valide os nomes e assine as cópias finais da pasta de distribuição.
+
+### 6.4 Assinar e verificar as DLLs da distribuição
 
 ```powershell
-$SourceStage = Join-Path $WorkRoot 'source'
 $ApprovedFfmpegDllNames = @(
-    '<FFMPEG_DLL_1>.dll',
-    '<FFMPEG_DLL_2>.dll',
-    '<FFMPEG_DLL_3>.dll',
-    '<FFMPEG_DLL_4>.dll',
-    '<FFMPEG_DLL_5>.dll',
-    '<FFMPEG_DLL_6>.dll',
-    '<FFMPEG_DLL_7>.dll'
+    'avcodec-62.dll', 'avdevice-62.dll', 'avfilter-11.dll',
+    'avformat-62.dll', 'avutil-60.dll', 'swresample-6.dll', 'swscale-9.dll'
 )
-$FfmpegSource = Join-Path $RepoRoot 'libs\ffmpeg\bin'
+$FfmpegDlls = @($ApprovedFfmpegDllNames | ForEach-Object { Join-Path $FfmpegRoot $_ })
+$PeFiles = @($FinalExe, $ScreenRecorderDll) + $FfmpegDlls
 
-New-Item -ItemType Directory -Path $SourceStage -Force | Out-Null
-robocopy $RepoRoot $SourceStage /E /XD .git bin obj dist .opencode /XF *.pfx *.p12 *.key | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "Robocopy falhou com código $LASTEXITCODE." }
+if (-not (Test-Path -LiteralPath $FinalExe -PathType Leaf)) { throw 'RemoteEternal.exe ausente.' }
+if (-not (Test-Path -LiteralPath $ScreenRecorderDll -PathType Leaf)) { throw 'ScreenRecorderLib.dll ausente.' }
+if (@($FfmpegDlls | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -ne 0) { throw 'DLL FFmpeg ausente.' }
 
-$StagedFfmpegDir = Join-Path $SourceStage 'libs\ffmpeg\bin'
-Remove-Item -LiteralPath $StagedFfmpegDir -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $StagedFfmpegDir -Force | Out-Null
-
-foreach ($Name in $ApprovedFfmpegDllNames) {
-    $SourceDll = Join-Path $FfmpegSource $Name
-    if (-not (Test-Path -LiteralPath $SourceDll -PathType Leaf)) { throw "DLL FFmpeg ausente: $Name" }
-    Copy-Item -LiteralPath $SourceDll -Destination $StagedFfmpegDir
-}
-
-$StagedDlls = @(Get-ChildItem -LiteralPath $StagedFfmpegDir -Filter '*.dll' -File)
-if ($StagedDlls.Count -ne 7) { throw "Esperadas 7 DLLs FFmpeg; encontradas $($StagedDlls.Count)." }
-```
-
-Substitua os sete placeholders pelos nomes aprovados no manifesto da release. Não use curinga como seleção final sem conferir a contagem e a origem.
-
-### 6.4 Opcional e recomendado: assinar e verificar as DLLs no staging
-
-Assine somente as cópias em `$StagedFfmpegDir`; nunca modifique `F:\NodeJs\remoteEternal\libs\ffmpeg` durante a release. O exemplo usa certificado no repositório:
-
-```powershell
-$CertificateThumbprint = $env:RE_CODE_SIGNING_THUMBPRINT
-$TimestampUrl = $env:RE_TIMESTAMP_RFC3161_URL
-
-foreach ($Dll in $StagedDlls) {
-    & $SignTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 /v $Dll.FullName
-    if ($LASTEXITCODE -ne 0) { throw "Falha ao assinar $($Dll.Name)." }
-    & $SignTool verify /pa /all /v $Dll.FullName
-    if ($LASTEXITCODE -ne 0) { throw "Falha ao verificar $($Dll.Name)." }
+foreach ($PeFile in $PeFiles) {
+    & $SignTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 /v $PeFile
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao assinar $PeFile." }
+    & $SignTool verify /pa /all /v $PeFile
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao verificar $PeFile." }
 }
 ```
 
-Para Artifact Signing ou HSM/provider, substitua somente a etapa de assinatura pelo mecanismo oficial vigente e mantenha a verificação Authenticode.
+### 6.5 Assinar o executável e as DLLs com SHA-256 e timestamp RFC 3161
 
-### 6.5 Publicar single-file self-contained x64 no staging
-
-```powershell
-$StagedProject = Join-Path $SourceStage 'src\RemoteEternal.App\RemoteEternal.App.csproj'
-
-dotnet publish $StagedProject `
-    --configuration Release `
-    --runtime win-x64 `
-    --self-contained true `
-    --output $PublishStage `
-    -p:PublishSingleFile=true `
-    -p:Version='<RELEASE_VERSION>'
-
-if ($LASTEXITCODE -ne 0) { throw "dotnet publish falhou com código $LASTEXITCODE." }
-
-$PublishedExe = Join-Path $PublishStage 'RemoteEternal.exe'
-if (-not (Test-Path -LiteralPath $PublishedExe -PathType Leaf)) { throw 'RemoteEternal.exe não foi publicado.' }
-```
-
-### 6.6 Assinar o EXE com SHA-256 e timestamp RFC 3161
-
-Exemplo pelo repositório de certificados:
+A assinatura ocorre sobre os arquivos PE já presentes em `dist\RemoteEternal`. O ZIP só deve ser criado depois de todas as assinaturas e verificações.
 
 ```powershell
 $CertificateThumbprint = $env:RE_CODE_SIGNING_THUMBPRINT
@@ -263,71 +212,66 @@ $TimestampUrl = $env:RE_TIMESTAMP_RFC3161_URL
 if ([string]::IsNullOrWhiteSpace($CertificateThumbprint)) { throw 'RE_CODE_SIGNING_THUMBPRINT não definido.' }
 if ([string]::IsNullOrWhiteSpace($TimestampUrl)) { throw 'RE_TIMESTAMP_RFC3161_URL não definido.' }
 
-& $SignTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 /v $PublishedExe
-if ($LASTEXITCODE -ne 0) { throw "SignTool falhou com código $LASTEXITCODE." }
+foreach ($PeFile in $PeFiles) {
+    & $SignTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 /v $PeFile
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao assinar $PeFile." }
+}
 ```
 
 `<TIMESTAMP_RFC3161_URL>` ou `RE_TIMESTAMP_RFC3161_URL` é um placeholder. Use o endpoint RFC 3161 oficial publicado pela CA ou pelo serviço escolhido. Exemplos de fornecedores encontrados em documentação podem mudar e **não são uma exigência do RemoteEternal**; valide o endpoint diretamente na documentação oficial da opção contratada.
 
-### 6.7 Verificar assinatura e timestamp
+### 6.6 Verificar assinatura e timestamp
 
 ```powershell
-$Signature = Get-AuthenticodeSignature -LiteralPath $PublishedExe
-$Signature | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate, Path
-
-if ($Signature.Status -ne 'Valid') { throw "Authenticode inválido: $($Signature.Status)" }
-if ($null -eq $Signature.TimeStamperCertificate) { throw 'Timestamp Authenticode ausente.' }
-
-& $SignTool verify /pa /all /v $PublishedExe
-if ($LASTEXITCODE -ne 0) { throw "Verificação SignTool falhou com código $LASTEXITCODE." }
+foreach ($PeFile in $PeFiles) {
+    $Signature = Get-AuthenticodeSignature -LiteralPath $PeFile
+    $Signature | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate, Path
+    if ($Signature.Status -ne 'Valid') { throw "Authenticode inválido: $PeFile" }
+    if ($null -eq $Signature.TimeStamperCertificate) { throw "Timestamp Authenticode ausente: $PeFile" }
+    & $SignTool verify /pa /all /v $PeFile
+    if ($LASTEXITCODE -ne 0) { throw "Verificação SignTool falhou: $PeFile" }
+}
 ```
 
 Confira manualmente no resultado o subject/publisher, a cadeia, o digest SHA-256 e o timestamp. Um exit code zero isolado não substitui essas verificações.
 
-### 6.8 Empacotar somente depois da assinatura e gerar hashes
+### 6.7 Empacotar somente depois da assinatura e gerar hashes
 
 ```powershell
-New-Item -ItemType Directory -Path (Split-Path -Parent $FinalExe) -Force | Out-Null
-Copy-Item -LiteralPath $PublishedExe -Destination $FinalExe -Force
-
 Remove-Item -LiteralPath $FinalZip -Force -ErrorAction SilentlyContinue
-Compress-Archive -LiteralPath $FinalExe -DestinationPath $FinalZip -CompressionLevel Optimal
+Compress-Archive -Path (Join-Path $DistRoot '*') -DestinationPath $FinalZip -CompressionLevel Optimal
 
-$ExeHash = Get-FileHash -LiteralPath $FinalExe -Algorithm SHA256
 $ZipHash = Get-FileHash -LiteralPath $FinalZip -Algorithm SHA256
+$PeHashes = @($PeFiles | ForEach-Object { Get-FileHash -LiteralPath $_ -Algorithm SHA256 })
 @(
-    "$($ExeHash.Hash)  $([System.IO.Path]::GetFileName($FinalExe))",
+    $PeHashes | ForEach-Object { "$($_.Hash)  $($_.Path)" }
     "$($ZipHash.Hash)  $([System.IO.Path]::GetFileName($FinalZip))"
 ) | Set-Content -LiteralPath $HashFile -Encoding utf8NoBOM
 
-$ExeHash
+$PeHashes
 $ZipHash
 ```
 
-Não assine o ZIP: assine o PE antes e preserve o EXE assinado dentro do ZIP. Extraia o ZIP em outro diretório e repita as verificações sobre o EXE extraído antes de publicar.
+Não assine o ZIP: assine os PEs antes e preserve os arquivos assinados dentro da pasta e do ZIP. Extraia o ZIP em outro diretório e repita as verificações sobre os arquivos PE extraídos antes de publicar.
 
 ## 7. Ordem obrigatória do pipeline de release
 
-1. Compilar os projetos necessários e selecionar as **sete DLLs FFmpeg aprovadas** em staging temporário.
-2. Opcional, porém recomendado: assinar e verificar as sete DLLs no staging.
-3. Executar `dotnet publish` como single-file, self-contained, `win-x64`, incorporando as cópias do staging.
-4. Assinar o `RemoteEternal.exe` final com Authenticode, digest SHA-256 e timestamp RFC 3161 SHA-256.
-5. Verificar com `Get-AuthenticodeSignature` e `signtool verify /pa /all /v`.
-6. Gerar o ZIP **somente depois** da assinatura.
-7. Gerar e publicar hashes SHA-256 do EXE e do ZIP.
-8. Extrair o ZIP e verificar novamente o EXE extraído.
-9. Testar em uma máquina limpa/representativa com Windows 11 e Smart App Control ativo.
-10. Executar um teste funcional que force a extração e o carregamento das sete DLLs FFmpeg.
+1. Compilar/publicar a distribuição self-contained em `dist\RemoteEternal`.
+2. Confirmar `RemoteEternal.exe`, `ScreenRecorderLib.dll` ao lado do executável e exatamente as sete DLLs FFmpeg em `dist\RemoteEternal\ffmpeg`.
+3. Assinar e verificar todos os arquivos PE da pasta com Authenticode, digest SHA-256 e timestamp RFC 3161 SHA-256.
+4. Gerar o ZIP **somente depois** da assinatura.
+5. Gerar e publicar hashes SHA-256 dos arquivos PE e do ZIP.
+6. Extrair o ZIP e verificar novamente os arquivos PE extraídos.
+7. Testar em uma máquina limpa/representativa com Windows 11 e Smart App Control ativo.
+8. Executar um teste funcional de captura, decodificação e reprodução usando as DLLs da pasta.
 
-Qualquer alteração do EXE após a assinatura invalida a assinatura. Mudança de versão, recursos incorporados ou DLLs exige novo publish e nova assinatura.
+Qualquer alteração de um arquivo PE após a assinatura invalida a assinatura. Mudança de versão ou de arquivos da distribuição exige novo publish e nova assinatura.
 
 ## 8. Consideração específica das DLLs FFmpeg
 
-Embora o produto seja distribuído como single-file, as sete DLLs FFmpeg são extraídas em runtime. SAC, Windows Defender Application Control (WDAC), antivírus ou políticas corporativas podem avaliar esses arquivos no momento da extração/carregamento.
+As sete DLLs FFmpeg são arquivos PE separados em `dist\RemoteEternal\ffmpeg`. SAC, Windows Defender Application Control (WDAC), antivírus ou políticas corporativas podem avaliá-las no carregamento. Assine e verifique as cópias finais da pasta antes de criar o ZIP; não há extração em runtime nem FFmpeg embutido.
 
-O teste de aceite deve confirmar não apenas a execução do EXE, mas também captura/decodificação/reprodução suficiente para carregar todas as bibliotecas nativas requeridas. Se a política do ambiente exigir ou a validação demonstrar bloqueio, assine as **cópias no staging antes de embuti-las**. Isso preserva a assinatura Authenticode quando forem extraídas.
-
-Nunca assine nem modifique os arquivos originais em `libs\ffmpeg`; use uma pasta temporária, valide que há exatamente sete DLLs e descarte o staging ao final.
+O teste de aceite deve confirmar a execução do EXE e captura/decodificação/reprodução suficiente para carregar todas as bibliotecas nativas requeridas. Nunca assine nem modifique os arquivos originais em `libs\ffmpeg`; a assinatura deve ocorrer nos artefatos da distribuição.
 
 ## 9. GitHub Actions e CI
 
@@ -335,16 +279,12 @@ A automação deve conter conceitualmente os seguintes passos, sem codificar val
 
 1. Runner Windows aprovado e fixação das versões de .NET SDK e Windows SDK.
 2. Checkout sem persistir credenciais desnecessárias.
-3. Restauração/build e preparação do staging das sete DLLs.
+3. Restauração/build e preparação da pasta `dist\RemoteEternal`.
 4. Autenticação federada OIDC/workload identity no Azure, ou acesso protegido ao provider/HSM da CA.
-5. Assinatura e verificação opcional das DLLs no staging.
-6. Publish single-file self-contained x64.
-7. Assinatura do EXE final.
-8. Verificação obrigatória de Authenticode, publisher e timestamp.
-9. Criação do ZIP e hashes somente após a verificação.
-10. Upload dos artefatos assinados mediante ambiente protegido/aprovação.
-11. Teste separado em Windows 11 com SAC ativo, quando a infraestrutura permitir.
-12. Limpeza do staging e de qualquer material temporário mesmo em caso de falha.
+5. Assinatura e verificação de todos os arquivos PE da distribuição.
+6. Verificação obrigatória de Authenticode, publisher e timestamp.
+7. Criação do ZIP e hashes somente após a verificação.
+8. Upload dos artefatos assinados mediante ambiente protegido/aprovação.
 
 GitHub-hosted runners Windows podem usar Artifact Signing conforme a integração vigente. Confirme na documentação atual quais action/extensão, permissões, regiões e parâmetros são suportados; não copie um workflow antigo sem revisão.
 
@@ -354,16 +294,16 @@ Para Artifact Signing, prefira OIDC e conceda à identidade do job somente a per
 
 Uma release está pronta somente quando:
 
-- [ ] `Get-AuthenticodeSignature` retorna `Status: Valid` para o EXE final e para o EXE extraído do ZIP.
-- [ ] `signtool verify /pa /all /v` termina com sucesso.
+- [ ] `Get-AuthenticodeSignature` retorna `Status: Valid` para os arquivos PE finais e para os arquivos PE extraídos do ZIP.
+- [ ] `signtool verify /pa /all /v` termina com sucesso para todos os arquivos PE.
 - [ ] A assinatura usa RSA e digest SHA-256.
 - [ ] O timestamp RFC 3161 está presente e usa SHA-256.
 - [ ] O publisher exibido corresponde ao nome jurídico aprovado no subject do certificado.
 - [ ] A versão publicada corresponde à versão planejada, não permanece acidentalmente em `1.0.0`.
-- [ ] O ZIP foi criado depois da assinatura e contém o mesmo EXE assinado verificado.
-- [ ] Os hashes SHA-256 do EXE e ZIP foram gerados e conferidos.
+- [ ] O ZIP foi criado depois da assinatura e contém os mesmos arquivos PE assinados verificados.
+- [ ] Os hashes SHA-256 dos arquivos PE e ZIP foram gerados e conferidos.
 - [ ] O EXE não é bloqueado em Windows 11 com SAC ativo.
-- [ ] As sete DLLs FFmpeg são extraídas e carregadas sem bloqueio SAC/WDAC.
+- [ ] As sete DLLs FFmpeg são carregadas da pasta sem bloqueio SAC/WDAC.
 - [ ] Nenhum PFX, senha, chave, token ou credencial aparece no repositório, logs ou artefatos.
 
 ## 11. Troubleshooting
@@ -388,12 +328,10 @@ Uma release está pronta somente quando:
 - Confirme a identidade validada no Artifact Signing ou pela CA.
 - Não tente corrigir o Publisher alterando apenas `<Company>`; o Windows usa o subject da assinatura para identificar o editor.
 
-### EXE assinado, mas DLLs FFmpeg são bloqueadas
+### EXE ou DLL assinado, mas bloqueado
 
-- Confirme quais sete DLLs foram incorporadas e extraídas.
-- Verifique individualmente as cópias extraídas com Authenticode e logs SAC/WDAC autorizados.
-- Assine as cópias no staging antes do publish e repita todo o pipeline.
-- Não modifique `libs\ffmpeg` original.
+- Confirme quais arquivos PE foram assinados e verificados na pasta de distribuição.
+- Verifique individualmente as cópias com Authenticode e logs SAC/WDAC autorizados.
 
 ### Smart App Control versus SmartScreen
 
@@ -420,18 +358,17 @@ Não desative o SAC como solução de distribuição. Corrija assinatura, cadeia
 [ ] Local/CI e autenticação definidos; OIDC/workload identity preferido
 [ ] Nenhum PFX, senha, chave, token ou credencial no Git, logs ou artefatos
 [ ] Versão de release definida e metadados revisados
-[ ] Staging temporário criado sem alterar libs\ffmpeg
-[ ] Exatamente sete DLLs FFmpeg aprovadas copiadas para o staging
-[ ] DLLs do staging assinadas/verificadas quando requerido ou recomendado
-[ ] dotnet publish single-file self-contained win-x64 concluído
-[ ] RemoteEternal.exe assinado com /fd SHA256 /tr RFC3161 /td SHA256
-[ ] Get-AuthenticodeSignature retorna Valid e timestamp presente
-[ ] signtool verify /pa /all /v retorna sucesso
+[ ] Distribuição em pasta self-contained win-x64 preparada
+[ ] `RemoteEternal.exe` e `ScreenRecorderLib.dll` ao lado do executável
+[ ] Exatamente sete DLLs FFmpeg em `dist\RemoteEternal\ffmpeg`
+[ ] Arquivos PE da distribuição assinados com /fd SHA256 /tr RFC3161 /td SHA256
+[ ] Get-AuthenticodeSignature retorna Valid e timestamp presente para cada PE
+[ ] signtool verify /pa /all /v retorna sucesso para cada PE
 [ ] Publisher corresponde ao subject jurídico aprovado
 [ ] ZIP criado somente após a assinatura
-[ ] EXE extraído do ZIP continua com assinatura Valid
-[ ] Hashes SHA-256 do EXE e ZIP gerados e conferidos
-[ ] Windows 11 com Smart App Control ativo não bloqueia o EXE
-[ ] Sete DLLs FFmpeg são extraídas e carregadas no teste funcional
-[ ] Staging e materiais temporários removidos ao final
+[ ] Arquivos PE extraídos do ZIP continuam com assinatura Valid
+[ ] Hashes SHA-256 dos arquivos PE e ZIP gerados e conferidos
+[ ] Windows 11 com Smart App Control ativo não bloqueia o EXE nem as DLLs
+[ ] DLLs FFmpeg carregadas no teste funcional
+[ ] Materiais temporários removidos ao final
 ```
