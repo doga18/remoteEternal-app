@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using RemoteEternal.App.Services;
@@ -11,6 +12,7 @@ public partial class MainWindow : Window
     private ServerConnection? _conn;
     private readonly SessionHost _host = new();
     private bool _hostActive;
+    private UpdateInfo? _latestUpdate;
 
     public MainWindow()
     {
@@ -337,27 +339,68 @@ public partial class MainWindow : Window
         {
             if (_conn is null) return;
             var update = await _conn.GetLatestUpdateAsync(AppState.AppVersion);
-            if (update is not null && !string.IsNullOrWhiteSpace(update.Version))
+            await Dispatcher.InvokeAsync(() =>
             {
-                await Dispatcher.InvokeAsync(() =>
+                _latestUpdate = update is not null && !string.IsNullOrWhiteSpace(update.Version) ? update : null;
+                if (_latestUpdate is null)
                 {
-                    TxtUpdateInfo.Text = BuildUpdateMessage(update);
-                    TxtUpdateInfo.Visibility = Visibility.Visible;
-                });
-            }
+                    UpdatePanel.Visibility = Visibility.Collapsed;
+                    return;
+                }
+                TxtUpdateInfo.Text = BuildUpdateMessage(_latestUpdate);
+                UpdatePanel.Visibility = Visibility.Visible;
+            });
         }
         catch
         {
             // Atualização é opcional; falha não impede o uso do App.
         }
     }
+
     private static string BuildUpdateMessage(UpdateInfo update)
     {
         var details = new List<string>();
         if (update.FileCount > 0) details.Add($"{update.FileCount} arquivos");
         if (update.SizeBytes > 0) details.Add($"~{update.SizeBytes / 1_000_000.0:0.0} MB");
         string suffix = details.Count > 0 ? $" ({string.Join(", ", details)})" : "";
-        return $"Nova versão {update.Version} disponível{suffix}. Baixe em: {update.Url}";
+        return $"Nova versão {update.Version} disponível{suffix}.";
+    }
+
+    private void OnUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (_latestUpdate is null || string.IsNullOrWhiteSpace(_latestUpdate.Url)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(_latestUpdate.Url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ShowConnectError("Não foi possível abrir o download: " + ex.Message);
+        }
+    }
+
+    private void OnUpdateMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.ContextMenu is { } menu)
+        {
+            menu.PlacementTarget = button;
+            menu.IsOpen = true;
+        }
+    }
+
+    private void OnCopyUpdateLinkClick(object sender, RoutedEventArgs e)
+    {
+        if (_latestUpdate is null || string.IsNullOrWhiteSpace(_latestUpdate.Url)) return;
+        try
+        {
+            Clipboard.SetText(_latestUpdate.Url);
+        }
+        catch (Exception ex)
+        {
+            // A área de transferência pode falhar em alguns ambientes (ex.: sessões
+            // RDP ou restrições de política); o App continua utilizável sem o copy.
+            ShowConnectError("Não foi possível copiar o link: " + ex.Message);
+        }
     }
 
     private static bool IsValidHostId(string id) =>

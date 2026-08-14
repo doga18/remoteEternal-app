@@ -53,6 +53,21 @@
             <Setter Property="Background" Value="#FF3A3D46"/>
             <Setter Property="Foreground" Value="#FFE8EAF0"/>
         </Style>
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="#FF3A3D46"/>
+        </Style>
+        <Style TargetType="MenuItem">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid Background="{StaticResource BgBrush}">
@@ -63,7 +78,22 @@
                     <TextBlock Text="Acesso remoto simples e ilimitado" FontSize="12" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" Margin="0,2,0,18"/>
                     <TextBlock Text="URL da API" Foreground="{StaticResource MutedBrush}"/>
                     <TextBox x:Name="TxtApiUrl" Text="https://remoteeternal-api.onrender.com"/>
-                    <TextBlock x:Name="TxtUpdateInfo" Foreground="#FF9DD6FF" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                    <Grid x:Name="UpdatePanel" Margin="0,6,0,0" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="BtnUpdate" Grid.Column="0" Content="Atualizar" Padding="12,6" Margin="0,4,6,4" Click="OnUpdateClick"/>
+                        <Button x:Name="BtnUpdateMenu" Grid.Column="1" Content="▾" Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,4,0,4" Click="OnUpdateMenuClick">
+                            <Button.ContextMenu>
+                                <ContextMenu Placement="Bottom">
+                                    <MenuItem Header="Copiar link da atualização" Click="OnCopyUpdateLinkClick"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <TextBlock x:Name="TxtUpdateInfo" Grid.Column="2" Foreground="#FF9DD6FF" TextWrapping="Wrap" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    </Grid>
                     <TextBlock x:Name="TxtConnectError" Foreground="#FFFF8A80" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                     <Button x:Name="BtnConnectServer" Content="Conectar servidor" Click="OnConnectServerClick"/>
                 </StackPanel>
