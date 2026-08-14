@@ -10,7 +10,7 @@
 
 O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plano de controle na **API Node.js**:
 
-- A API (`api/`, Express + WebSocket + PostgreSQL) atribui ID único ao host, recebe o anúncio online, valida o verifier no `lookup`, aplica rate limit, gera um token de sessão por conexão e notifica o host via WebSocket; após o `connectAck`, devolve IP, porta e token ao cliente.
+- A API (`api/`, Express + WebSocket + PostgreSQL) atribui ID único ao host, recebe o anúncio online com `advertisedAddress` IPv4 opcional, valida o verifier no `lookup`, aplica rate limit, gera um token de sessão por conexão e notifica o host via WebSocket; após o `connectAck`, devolve o endereço anunciado, a porta e o token ao cliente. O IP observado pela API fica apenas para contexto e rate limit.
 - O App C# fala com a API via HTTP REST + WebSocket (`ServerConnection` com `HttpClient` + `ClientWebSocket`); `MainWindow` tem campo "URL da API" e verificação de atualização ao abrir.
 - Modo assistido exige aprovação manual do host a cada conexão; modo não assistido usa ID + senha com salt/verifier PBKDF2 gerados no cliente (senha nunca transmitida em claro).
 - Sessão direta entre host e cliente com `SecureFrameChannel`, AES-GCM autenticado e derivação HKDF com chaves por direção.
@@ -31,7 +31,7 @@ O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plan
 | `package.json` | Pronto | Node.js 18+; scripts `start`, `dev` e `test` (`node --test`). |
 | `.env.example` | Pronto | Valores fictícios; `.env` nunca versionado. |
 | `config/aiven-ca.pem` | Pronto | Certificado CA do Aiven (público), versionado no repo da API. |
-| `src/index.js` | Pronto | Express + HTTP + WebSocket (`/ws`); rotas `health`, `register`, `online`, `salt`, `lookup`, `update/latest`; canal WS do host (`hello`, `connectAck`). |
+| `src/index.js` | Pronto | Express + HTTP + WebSocket (`/ws`); rotas `health`, `register`, `online`, `salt`, `lookup`, `update/latest`; `online` recebe `advertisedAddress` IPv4 opcional e `lookup` usa esse endereço para roteamento, mantendo o IP observado apenas para contexto/rate limit; canal WS do host (`hello`, `connectAck`). |
 | `src/db.js` | Pronto | Pool `pg` (formato Aiven `DB_*` ou `DATABASE_URL`), SSL com CA (`rejectUnauthorized true`), `initDb()`, pool max 5 / min 1. |
 | `src/schema.sql` | Pronto | `CREATE TABLE IF NOT EXISTS hosts`. |
 | `src/registry.js` | Pronto | `HostRegistry` em memória: hosts online e pendências de lookup (timeout 20 s). |
@@ -46,7 +46,7 @@ O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plan
 | Arquivo | Status | Notas |
 |---|---|---|
 | `RemoteEternal.Core.csproj` | Pronto | `net8.0`, nullable habilitado. |
-| `Protocol/ControlMessages.cs` | Pronto | Registros de requisição/resultado usados pelo App no plano de controle (`RegisterHostResult`, `HostOnlineResult`, `GetHostSaltResult`, `LookupResult`, `ConnectNotify`, `ConnectAck`) e `Envelope`. |
+| `Protocol/ControlMessages.cs` | Pronto | Registros de requisição/resultado usados pelo App no plano de controle (`RegisterHostResult`, `HostOnlineResult`, `GetHostSaltResult`, `LookupResult`, `ConnectNotify`, `ConnectAck`) e `Envelope`; `HostOnlineRequest.AdvertisedAddress` é opcional e serializado como `advertisedAddress`. |
 | `Protocol/SessionProtocol.cs` | Pronto | Controle de sessão direta, monitores e codificação de eventos de input. |
 | `Net/FrameChannel.cs` | Pronto | Framing de comprimento e limite de frame. |
 | `Crypto/Hkdf.cs` | Pronto | Derivação de chaves. |
@@ -76,7 +76,7 @@ O produto usa acesso por ID de seis dígitos, sem contas de usuário, com o plan
 | `Views/MainWindow.xaml(.cs)` | Pronto | Campo "URL da API"; painel HOST (assistido/não assistido, senha, Iniciar/Parar acesso, ID) e painel CLIENTE (ID + senha + Conectar); verificação de atualização ao abrir. |
 | `Views/ViewerWindow.xaml(.cs)` | Pronto | Visualização, seleção de monitor, áudio, fullscreen, input e encerramento. |
 | `Services/AppState.cs` | Pronto | Configuração local; `apiUrl` em `config.txt`; HostId persistido em `host.id`; senha nunca persistida; listener do host padrão 5050. |
-| `Services/ServerConnection.cs` | Pronto | Cliente HTTP + WebSocket: `ConnectAsync`, `RegisterHostAsync`, `HostOnlineAsync`, `GetHostSaltAsync`, `LookupAsync`, `GetLatestUpdateAsync`, `HostWsConnectAsync`, `SendConnectAckWsAsync`. |
+| `Services/ServerConnection.cs` | Pronto | Cliente HTTP + WebSocket: `ConnectAsync`, `RegisterHostAsync`, `HostOnlineAsync`, `GetHostSaltAsync`, `LookupAsync`, `GetLatestUpdateAsync`, `HostWsConnectAsync`, `SendConnectAckWsAsync`; `HostOnlineAsync` envia `advertisedAddress` quando disponível e o lookup retorna o endereço para a sessão direta. |
 | `Services/SessionHost.cs` | Pronto | Listener reutilizável do host (`StopAsync`), aceite de sessão, captura e input. |
 | `Services/SessionClient.cs` | Pronto | Conexão direta, recebimento de mídia e envio de input. |
 | `Services/SessionStream.cs` | Pronto | Transporte de blocos de mídia com tamanho real e slots limitados. |

@@ -88,12 +88,15 @@ Os scripts de distribuição são tratados pela tarefa de release; este document
 - A API é distribuída independentemente (repo `remoteEternal-api`), ex.: no Render como Web Service (`npm install` / `npm start`).
 - O roteiro para iniciantes está em `docs\TESTANDO.md`.
 
-## Firewall
+## Rede e firewall
 
-- API (plano de controle): liberar a porta `3000` (ou `PORT`) na máquina que roda a API.
-- Host: liberar a porta do listener da sessão direta (padrão `5050`).
+- A API (plano de controle) pode rodar localmente ou no Render; libere a porta `3000` (ou `PORT`) somente quando a API estiver hospedada na rede local.
+- A sessão direta não passa pela API: o host inicia o listener antes de anunciar-se online e usa a porta `5050` por padrão.
+- O host anuncia um IPv4 alcançável pelo cliente em `advertisedAddress`; esse endereço serve apenas para roteamento, não é credencial nem substitui a autorização por senha ou aprovação.
+- Para o teste local, host e cliente devem estar na mesma LAN, com TCP `5050` liberado no firewall do host e acessível a partir do cliente. Restrinja as regras ao perfil de rede adequado.
+- Com a API no Render, o cliente ainda precisa alcançar diretamente o IPv4 anunciado e a porta `5050` do host. Fora da LAN, isso exige port forwarding; sem relay ou NAT traversal, a sessão pode falhar mesmo que o lookup pela API funcione.
+- Se `advertisedAddress` não estiver disponível, o fallback legado pode anunciar um endereço de proxy/NAT que não seja alcançável pelo cliente.
 - A porta `7000` do antigo servidor C# não é mais usada.
-- Regras devem restringir ao perfil de rede adequado.
 
 ## Permissões
 

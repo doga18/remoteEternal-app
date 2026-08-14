@@ -1,5 +1,11 @@
 # CHANGELOG.md
 
+## 2026-08-14 — Endereço anunciado da sessão direta
+
+- `HostOnlineRequest` passou a aceitar `advertisedAddress` opcional, um IPv4 alcançável pelo cliente usado somente para roteamento da sessão direta; autorização e endereço permanecem separados.
+- O App resolve o IPv4 local pela rota TCP até a API, inicia o listener direto na porta `5050` antes de anunciar o host online e envia o endereço anunciado.
+- O lookup usa o endereço anunciado, quando presente; o IP observado pela API fica restrito a contexto e rate limit. Sem esse campo, o fallback legado pode anunciar proxy/NAT e falhar; acesso fora da LAN continua exigindo port forwarding, relay ou NAT traversal.
+
 ## 2026-08-14 — Distribuição em pasta e manifest de update
 
 - Distribuição atual em pasta self-contained Windows x64: `dist\RemoteEternal`, com `RemoteEternal.exe`, `ScreenRecorderLib.dll` mixed-mode ao lado do executável, runtime .NET e `ffmpeg\` com sete DLLs nativas; o ZIP é `dist\RemoteEternal-1.0.0-win-x64.zip`.

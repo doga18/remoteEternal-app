@@ -17,9 +17,9 @@ O App fala com a API Node.js via **HTTP REST + WebSocket** (não existe mais ser
 
 - `GET /api/health` — saúde e versão da API.
 - `POST /api/hosts/register` `{deviceName, os}` → `{ok, hostId}` — atribui um ID único de 6 dígitos.
-- `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier}` → `{ok}` — anuncia o host online e registra o modo de acesso (assisted/unassisted) e as credenciais do modo não assistido.
+- `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier, advertisedAddress?}` → `{ok}` — anuncia o host online; a API valida `advertisedAddress` quando presente como IPv4 literal alcançável pelo cliente e o usa somente para roteamento da sessão direta. O modo de acesso e as credenciais do modo não assistido continuam tratando autorização separadamente do endereço.
 - `GET /api/hosts/:hostId/salt` → `{ok, accessMode, salt}` — consulta o salt e o modo do host.
-- `POST /api/hosts/:hostId/lookup` `{authHash}` → `{ok, ip, port, sessionToken}` — encontro entre cliente e host; aguarda a decisão do host por até 20 segundos.
+- `POST /api/hosts/:hostId/lookup` `{authHash}` → `{ok, ip, port, sessionToken}` — valida a autorização e, após a aceitação, devolve o endereço anunciado pelo host (com fallback legado quando ausente), a porta e o token; o IP observado pela API é usado apenas para contexto e rate limit.
 - `GET /api/update/latest?currentVersion=X` → `{ok, update: {version, url, sizeBytes, sha256, fileCount, notes} | null}` — verificação de atualização do App.
 
 WebSocket em `/ws` (usado **apenas pelo host**):
@@ -82,11 +82,11 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 1. A API Node.js inicia na porta `3000` e conecta ao PostgreSQL (Aiven ou local).
 2. O host inicia o App, informa a URL da API (ex.: `http://localhost:3000`) e conecta; a API responde `GET /api/health`.
 3. O host escolhe acesso assistido ou não assistido; no modo não assistido, cria senha, salt e verifier PBKDF2 localmente.
-4. Ao clicar em Iniciar acesso, o host obtém um ID único de seis dígitos (`registerHost`, persistido em `host.id`), anuncia-se online (`hostOnline`), conecta o WebSocket (`hello`) e inicia o listener direto na porta `5050`.
+4. Ao clicar em Iniciar acesso, o host obtém um ID único de seis dígitos (`registerHost`, persistido em `host.id`), inicia o listener direto na porta `5050`, resolve o próprio IPv4 local pela rota TCP até a API e anuncia-se online (`hostOnline`, enviando `advertisedAddress`); em seguida conecta o WebSocket (`hello`).
 5. O cliente informa a mesma URL da API, digita o ID do host e, se necessário, a senha; obtém o salt com `getHostSalt` e consulta o destino com `lookup`.
 6. A API aplica o rate limit, valida o verifier no modo não assistido, gera um token de sessão e envia `connectNotify` ao host pelo WebSocket.
 7. No modo assistido, o host mostra o pedido e exige aprovação manual; no modo não assistido, aceita automaticamente.
-8. O host responde `connectAck`; a API devolve ao cliente IP, porta e token de sessão.
+8. O host responde `connectAck`; a API devolve ao cliente o endereço anunciado (`advertisedAddress`), a porta e o token de sessão.
 9. O cliente conecta diretamente ao host com `SecureFrameChannel`; o host envia monitores e o cliente inicia a sessão escolhendo monitor e áudio.
 10. O host captura e envia vídeo/áudio; o cliente decodifica, reproduz e envia eventos de entrada autorizados.
 11. Ao desconectar, parar o acesso ou fechar o App, a sessão, o listener, o WebSocket do host e os pedidos pendentes são encerrados e os recursos liberados.
