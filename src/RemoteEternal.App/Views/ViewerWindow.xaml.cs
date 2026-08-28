@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Buffers.Binary;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
@@ -12,7 +13,7 @@ namespace RemoteEternal.App.Views;
 public partial class ViewerWindow : Window
 {
     private readonly SessionClient _client = new();
-    private FfmpegDecoder? _decoder;
+    private H264StreamDecoder? _decoder;
     private readonly AudioPlayer _audio = new();
     private WriteableBitmap? _bitmap;
     private int _frameWidth, _frameHeight;
@@ -40,6 +41,7 @@ public partial class ViewerWindow : Window
         };
         _client.Connected += () => Dispatcher.InvokeAsync(() => TxtStatus.Text = "Aguardando informações da tela...");
         _client.MediaRestarted += () => Dispatcher.InvokeAsync(OnMediaRestart);
+        _client.MediaFrameReceived += OnMediaFrame;
         _client.ErrorReceived += msg => Dispatcher.InvokeAsync(() => ShowError(msg));
         _client.Ended += reason => Dispatcher.InvokeAsync(() => CloseSession(reason));
         _client.Closed += () => Dispatcher.InvokeAsync(() =>
@@ -125,6 +127,17 @@ public partial class ViewerWindow : Window
         StartDecoder();
     }
 
+    /// <summary>Recebe um frame H.264 cru do host ([flags(1)][ptsMs(8)][nalData]) e alimenta o decoder.</summary>
+    private void OnMediaFrame(byte[] payload)
+    {
+        if (payload.Length < 9) return;
+        bool isKey = (payload[0] & 1) != 0;
+        long pts = BinaryPrimitives.ReadInt64LittleEndian(payload.AsSpan(1));
+        var nal = new byte[payload.Length - 9];
+        Buffer.BlockCopy(payload, 9, nal, 0, nal.Length);
+        _decoder?.FeedPacket(nal, isKey, pts);
+    }
+
     private void StartDecoder()
     {
         var old = _decoder;
@@ -133,22 +146,10 @@ public partial class ViewerWindow : Window
         _audio.Restart();
         try
         {
-            var decoder = new FfmpegDecoder(_client.Media);
-            decoder.ErrorOccurred += msg => Dispatcher.InvokeAsync(() => ShowError(msg));
+            var decoder = new H264StreamDecoder();
             decoder.VideoFrameReady += OnVideoFrame;
-            decoder.AudioReady += (pcm, rate, ch) =>
-            {
-                try
-                {
-                    _audio.SetFormat(rate, ch);
-                    _audio.AddSamples(pcm, 0, pcm.Length);
-                }
-                catch
-                {
-                }
-            };
             _decoder = decoder;
-            decoder.Start();
+            TxtStatus.Visibility = Visibility.Collapsed;
         }
         catch (Exception ex)
         {

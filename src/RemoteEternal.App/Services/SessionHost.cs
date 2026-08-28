@@ -7,7 +7,8 @@ using RemoteEternal.Core.Crypto;
 using RemoteEternal.Core.Net;
 using RemoteEternal.Core.Protocol;
 using RemoteEternal.App.Input;
-using ScreenRecorderLib;
+using RemoteEternal.App.Media;
+using System.Threading.Channels;
 
 namespace RemoteEternal.App.Services;
 
@@ -17,11 +18,14 @@ public class SessionHost : IAsyncDisposable
     private TcpListener? _listener;
     private CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _activeLock = new(1, 1);
-    private Recorder? _recorder;
+    private ScreenCapture? _capture;
     private SecureFrameChannel? _channel;
     private MonitorInfo? _activeMonitor;
     private List<MonitorInfo> _monitors = new();
-    private SessionStream? _mediaStream;
+    private Task? _mediaSenderTask;
+    private Channel<byte[]> _mediaQueue = Channel.CreateBounded<byte[]>(
+        new BoundedChannelOptions(60) { FullMode = BoundedChannelFullMode.Wait });
+    private long _mediaFrames, _mediaBytes, _mediaFailed;
     private Task? _acceptTask;
 
     /// <summary>Tempo máximo para o primeiro envio do hello (informações das telas). Curto por
@@ -331,89 +335,61 @@ public class SessionHost : IAsyncDisposable
             throw new IOException("Monitor não encontrado no snapshot do host");
         }
 
-        // ScreenRecorderLib is queried only after the hello/start handshake. Its
-        // native enumeration can block, so it must never be part of SendHelloAsync.
-        StatusChanged?.Invoke($"Resolvendo monitor para captura: {monitor.DeviceName}");
-        dynamic? display = null;
+        _activeMonitor = monitor;
+        DiagnosticLog.Write("SessionHost", $"StartCapture: capturando {monitor.DeviceName} via ScreenCapture (DDA + NVENC, H.264 cru)");
+
+        // Nova captura: avisa o cliente para reiniciar o decoder.
+        await SendControlAsync(new SessionMediaRestart("Nova captura"), SessionControlTypes.MediaRestart).ConfigureAwait(false);
+
+        // Recria a fila FIFO e inicia o remetente ordenado (ordem H.264 é crítica).
+        _mediaQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(60) { FullMode = BoundedChannelFullMode.Wait });
+        _mediaSenderTask = Task.Run(MediaSenderLoopAsync);
+
+        var capture = new ScreenCapture();
+        capture.FrameReady += OnCaptureFrame;
+        capture.Failed += msg =>
+        {
+            DiagnosticLog.Write("SessionCapture", "Falha na captura: " + msg);
+            StatusChanged?.Invoke($"Falha na captura: {msg}");
+        };
+        _capture = capture;
+        capture.Start(monitor.DeviceName, fps, bitrateKbps);
+        StatusChanged?.Invoke($"Capturando: {MonitorEnumeration.FriendlyName(monitor.DeviceName)}");
+    }
+
+    private void OnCaptureFrame(byte[] nal, bool isKey, long ptsMs)
+    {
+        // Frame de mídia: [flags(1)][ptsMs(8)][nalData]. A ORDEM dos frames H.264 é
+        // crítica (P-frames dependem dos anteriores), então enfileiramos em uma fila
+        // FIFO estrita drenada por um único remetente (sem reordenar).
+        byte[] frame = new byte[9 + nal.Length];
+        frame[0] = (byte)(isKey ? 1 : 0);
+        BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(1), ptsMs);
+        Buffer.BlockCopy(nal, 0, frame, 9, nal.Length);
+        if (!_mediaQueue.Writer.TryWrite(frame))
+            _mediaQueue.Writer.WriteAsync(frame).AsTask().Wait();
+    }
+
+    private async Task MediaSenderLoopAsync()
+    {
+        var channel = _channel;
+        if (channel is null) return;
         try
         {
-            var recorderDisplays = Recorder.GetDisplays();
-            display = recorderDisplays.FirstOrDefault(d =>
-                MonitorEnumeration.SameDisplay(d.DeviceName, monitor.DeviceName));
+            await foreach (var frame in _mediaQueue.Reader.ReadAllAsync())
+            {
+                await channel.SendAsync(SecureFrameChannel.TypeMedia, frame).ConfigureAwait(false);
+                long n = Interlocked.Increment(ref _mediaFrames);
+                Interlocked.Add(ref _mediaBytes, frame.Length);
+                if (n % 30 == 0)
+                    DiagnosticLog.Write("SessionCapture", $"MediaStream: frames={n} bytes={Interlocked.Read(ref _mediaBytes)} falhas={Interlocked.Read(ref _mediaFailed)}");
+            }
         }
         catch (Exception ex)
         {
-            StatusChanged?.Invoke($"Falha ao enumerar monitores para captura: {ex.Message}");
-            await SendControlAsync(new SessionEnd("Falha ao enumerar o monitor para captura")).ConfigureAwait(false);
-            throw;
+            Interlocked.Increment(ref _mediaFailed);
+            DiagnosticLog.Write("SessionCapture", "MediaSenderLoop: " + ex.GetType().Name);
         }
-
-        if (display is null)
-        {
-            StatusChanged?.Invoke($"Falha: monitor não encontrado no ScreenRecorderLib ({monitor.DeviceName})");
-            await SendControlAsync(new SessionEnd("Monitor não encontrado pelo ScreenRecorderLib")).ConfigureAwait(false);
-            throw new IOException("Monitor não encontrado pelo ScreenRecorderLib");
-        }
-        _activeMonitor = monitor;
-        DiagnosticLog.Write("SessionHost", $"StartCapture: display encontrado: {display.FriendlyName}");
-
-        var options = new RecorderOptions
-        {
-            SourceOptions = new SourceOptions
-            {
-                RecordingSources = new List<RecordingSourceBase>
-                {
-                    new DisplayRecordingSource { DeviceName = display.DeviceName, IsCursorCaptureEnabled = true }
-                }
-            },
-            OutputOptions = new OutputOptions { RecorderMode = RecorderMode.Video },
-            AudioOptions = new AudioOptions
-            {
-                IsAudioEnabled = audioEnabled,
-                Channels = AudioChannels.Stereo,
-                Bitrate = AudioBitrate.bitrate_128kbps
-            },
-            VideoEncoderOptions = new VideoEncoderOptions
-            {
-                Framerate = fps,
-                Bitrate = bitrateKbps * 1000,
-                Quality = quality,
-                Encoder = new H264VideoEncoder
-                {
-                    EncoderProfile = H264Profile.High,
-                    BitrateMode = H264BitrateControlMode.CBR
-                },
-                IsHardwareEncodingEnabled = true,
-                IsLowLatencyEnabled = true,
-                IsFragmentedMp4Enabled = true,
-                IsMp4FastStartEnabled = false,
-                IsFixedFramerate = false,
-                IsThrottlingDisabled = true
-            },
-            MouseOptions = new MouseOptions { IsMousePointerEnabled = true },
-            LogOptions = new LogOptions { IsLogEnabled = false }
-        };
-
-        _mediaStream = new SessionStream(_channel!);
-        var recorder = Recorder.CreateRecorder(options);
-        DiagnosticLog.Write("SessionHost", "StartCapture: recorder criado");
-        recorder.OnRecordingFailed += (_, e) =>
-        {
-            DiagnosticLog.Write("SessionCapture", $"OnRecordingFailed: {e.Error}");
-            StatusChanged?.Invoke($"Falha na captura: {e.Error}");
-        };
-        recorder.OnRecordingComplete += (_, e) =>
-            DiagnosticLog.Write("SessionCapture", $"OnRecordingComplete: {e.FilePath}");
-        recorder.OnStatusChanged += (_, e) =>
-            DiagnosticLog.Write("SessionCapture", $"OnStatusChanged: {e.Status}");
-        _recorder = recorder;
-
-        await SendControlAsync(new SessionMediaRestart("Nova captura"), SessionControlTypes.MediaRestart).ConfigureAwait(false);
-        DiagnosticLog.Write("SessionHost", "StartCapture: chamando Record");
-        recorder.Record(_mediaStream);
-        DiagnosticLog.Write("SessionHost", "StartCapture: Record retornou");
-        StatusChanged?.Invoke($"Capturando: {display.FriendlyName}");
-        DiagnosticLog.Write("SessionHost", $"StartCapture: capturando {display.FriendlyName}");
     }
 
     private void StopCapture()
@@ -421,15 +397,16 @@ public class SessionHost : IAsyncDisposable
         DiagnosticLog.Write("SessionHost", "StopCapture chamado");
         try
         {
-            _recorder?.Stop();
-            _recorder?.Dispose();
+            _capture?.Stop();
+            _capture?.Dispose();
         }
         catch
         {
         }
-        _recorder = null;
-        _mediaStream?.Stop();
-        _mediaStream = null;
+        _capture = null;
+        try { _mediaQueue.Writer.TryComplete(); } catch { }
+        try { _mediaSenderTask?.Wait(2000); } catch { }
+        _mediaSenderTask = null;
     }
 
     private void HandleInput(byte[] payload)
