@@ -5,7 +5,7 @@ namespace RemoteEternal.App.Services;
 public static class AppState
 {
     /// <summary>Versão enviada ao endpoint de atualização; altere ao publicar uma nova versão.</summary>
-    public const string AppVersion = "2.0.1";
+    public const string AppVersion = "2.1.0";
     private static string ConfigDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RemoteEternal");
 
@@ -16,11 +16,15 @@ public static class AppState
     public static string Os { get; }
 
     /// <summary>ID público de 6 dígitos do host, atribuído pelo servidor e persistido localmente.</summary>
+    /// <summary>Identidade estável da máquina, derivada do MAC da primeira placa de rede
+    /// (usada pela API para reutilizar o HostId e impedir duplicatas).</summary>
+    public static string MachineId { get; }
     public static string HostId { get; private set; } = "";
 
     public static string ApiUrl { get; set; } = "https://remoteeternal-api.onrender.com";
     public static int ListenPort { get; set; } = 5050;
     public static string LastUsername { get; set; } = "";
+    public static bool AutoStart { get; set; }
 
     static AppState()
     {
@@ -43,6 +47,8 @@ public static class AppState
             string saved = File.ReadAllText(hostIdFile).Trim();
             if (!string.IsNullOrEmpty(saved)) HostId = saved;
         }
+
+        MachineId = ComputeMachineId();
         Load();
     }
 
@@ -58,6 +64,25 @@ public static class AppState
         catch
         {
         }
+    }
+
+
+    private static string ComputeMachineId()
+    {
+        try
+        {
+            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+                var mac = ni.GetPhysicalAddress();
+                if (mac is null || mac.GetAddressBytes().Length == 0) continue;
+                return Convert.ToHexString(mac.GetAddressBytes());
+            }
+        }
+        catch { }
+        // Fallback: ID estável baseado no device.id persistido.
+        return DeviceId;
     }
 
     private static string CreateNewId(string path)
@@ -83,6 +108,7 @@ public static class AppState
                     case "apiUrl": ApiUrl = value; break;
                     case "listenPort": if (int.TryParse(value, out var lp)) ListenPort = lp; break;
                     case "username": LastUsername = value; break;
+                    case "autoStart": if (bool.TryParse(value, out var asv)) AutoStart = asv; break;
                 }
             }
         }
@@ -99,7 +125,8 @@ public static class AppState
             {
                 $"apiUrl={ApiUrl}",
                 $"listenPort={ListenPort}",
-                $"username={LastUsername}"
+                $"username={LastUsername}",
+                $"autoStart={AutoStart}"
             });
         }
         catch

@@ -23,7 +23,10 @@ public partial class MainWindow : Window
         // TxtHostPassLabel e TxtHostPass existirem, causando NullReferenceException.
         RadAssisted.Checked += OnAccessModeChanged;
         RadUnassisted.Checked += OnAccessModeChanged;
+        ChkAutoStart.Checked += (_, _) => { AppState.AutoStart = ChkAutoStart.IsChecked == true; AppState.Save(); };
+        ChkAutoStart.Unchecked += (_, _) => { AppState.AutoStart = ChkAutoStart.IsChecked == true; AppState.Save(); };
         TxtApiUrl.Text = AppState.ApiUrl;
+        ChkAutoStart.IsChecked = AppState.AutoStart;
         UpdateHostPasswordVisibility();
         _host.StatusChanged += msg => Dispatcher.Invoke(() => TxtHostStatus.Text = msg);
         _host.SessionActiveChanged += active => Dispatcher.Invoke(() =>
@@ -94,6 +97,9 @@ public partial class MainWindow : Window
             MainPanel.Visibility = Visibility.Visible;
             TxtServerLabel.Text = apiUrl;
             TxtHostId.Text = _hostActive && !string.IsNullOrEmpty(AppState.HostId) ? AppState.HostId : "—";
+
+            // Auto-start: inicia o acesso automaticamente se o usuário marcou a opção.
+            if (ChkAutoStart.IsChecked == true) await TryAutoStartHostAsync();
         }
         catch (Exception ex)
         {
@@ -237,10 +243,59 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Inicia o acesso automaticamente (usado pelo auto-start). Chama o mesmo
+    /// fluxo de OnToggleHostClick sem exigir clique do usuário.</summary>
+    private async Task TryAutoStartHostAsync()
+    {
+        if (_hostActive) return;
+        try
+        {
+            BtnToggleHost.IsEnabled = false;
+            string mode = RadUnassisted.IsChecked == true ? HostAccess.Unassisted : HostAccess.Assisted;
+            string? saltB64 = null;
+            string? verifierB64 = null;
+            if (mode == HostAccess.Unassisted)
+            {
+                string pass = TxtHostPass.Password;
+                if (string.IsNullOrEmpty(pass))
+                {
+                    TxtHostStatus.Text = "Auto-start: defina uma senha para o modo não assistido.";
+                    return;
+                }
+                byte[] salt = PasswordHasher.GenerateSalt();
+                byte[] verifier = PasswordHasher.Compute(salt, pass);
+                saltB64 = Convert.ToBase64String(salt);
+                verifierB64 = Convert.ToBase64String(verifier);
+            }
+            string hostId = await EnsureHostIdAsync();
+            string? advertisedAddress = await NetworkAddressResolver.ResolveAsync(_conn?.ApiUrl ?? AppState.ApiUrl);
+            await _host.StartAsync(AppState.ListenPort);
+            var published = await PublishHostOnlineAsync(hostId, mode, saltB64, verifierB64, advertisedAddress);
+            if (published is null) { await _host.StopAsync(); return; }
+            hostId = published;
+            try { await _conn!.HostWsConnectAsync(hostId); }
+            catch { await _conn!.HostWsCloseAsync(); await _host.StopAsync(); throw; }
+            _hostActive = true;
+            BtnToggleHost.Content = "Parar acesso";
+            TxtHostId.Text = hostId;
+            TxtHostStatus.Text = "Acesso iniciado automaticamente. Aguardando conexões.";
+            UpdateHostPasswordVisibility();
+        }
+        catch (Exception ex)
+        {
+            await _host.StopAsync();
+            TxtHostStatus.Text = "Auto-start falhou: " + ex.Message;
+        }
+        finally
+        {
+            BtnToggleHost.IsEnabled = true;
+        }
+    }
+
     private async Task<string> EnsureHostIdAsync()
     {
         if (!string.IsNullOrEmpty(AppState.HostId)) return AppState.HostId;
-        var reg = await _conn!.RegisterHostAsync(AppState.DeviceName, AppState.Os);
+        var reg = await _conn!.RegisterHostAsync(AppState.DeviceName, AppState.Os, AppState.MachineId);
         if (!reg.Ok || string.IsNullOrEmpty(reg.HostId))
             throw new InvalidOperationException(reg.Error ?? "Falha ao registrar host");
         AppState.SaveHostId(reg.HostId!);
@@ -257,14 +312,14 @@ public partial class MainWindow : Window
     private async Task<string?> PublishHostOnlineAsync(string hostId, string mode, string? saltB64, string? verifierB64, string? advertisedAddress)
     {
         var online = await _conn!.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os,
-            AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress);
+            AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress, AppState.MachineId);
         if (!online.Ok)
         {
             // HostId persistido pode não existir mais no servidor (banco recriado);
             // registra um novo ID e tenta publicar novamente.
             if (online.Error?.Contains("ID não encontrado") == true)
             {
-                var reg = await _conn.RegisterHostAsync(AppState.DeviceName, AppState.Os);
+                var reg = await _conn.RegisterHostAsync(AppState.DeviceName, AppState.Os, AppState.MachineId);
                 if (!reg.Ok || string.IsNullOrEmpty(reg.HostId))
                 {
                     MessageBox.Show(this, reg.Error ?? "Falha ao registrar host", "RemoteEternal", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -273,7 +328,7 @@ public partial class MainWindow : Window
                 AppState.SaveHostId(reg.HostId!);
                 hostId = reg.HostId!;
                 online = await _conn.HostOnlineAsync(hostId, AppState.DeviceName, AppState.Os,
-                    AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress);
+                    AppState.ListenPort, mode, saltB64, verifierB64, advertisedAddress, AppState.MachineId);
             }
             if (!online.Ok)
             {
@@ -371,12 +426,28 @@ public partial class MainWindow : Window
                 }
                 TxtUpdateInfo.Text = BuildUpdateMessage(_latestUpdate);
                 UpdatePanel.Visibility = Visibility.Visible;
+                PromptForUpdateIfNew(_latestUpdate);
             });
         }
         catch
         {
             // Atualização é opcional; falha não impede o uso do App.
         }
+    }
+
+    private static bool _updatePrompted;
+    /// <summary>Ao abrir, se houver uma atualização, pergunta ao usuário (não intrusivo).
+    /// Se o app já estiver rodando uma sessão, mantém como opcional.</summary>
+    private void PromptForUpdateIfNew(UpdateInfo update)
+    {
+        if (_updatePrompted) return;
+        _updatePrompted = true;
+        var result = MessageBox.Show(this,
+            $"Uma nova versão ({update.Version}) está disponível.\n\nDeseja baixar e instalar agora?",
+            "RemoteEternal - Atualização disponível",
+            MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (result == MessageBoxResult.Yes)
+            OnUpdateClick(null!, new RoutedEventArgs());
     }
 
     private static string BuildUpdateMessage(UpdateInfo update)
@@ -388,16 +459,35 @@ public partial class MainWindow : Window
         return $"Nova versão {update.Version} disponível{suffix}.";
     }
 
-    private void OnUpdateClick(object sender, RoutedEventArgs e)
+    private async void OnUpdateClick(object sender, RoutedEventArgs e)
     {
         if (_latestUpdate is null || string.IsNullOrWhiteSpace(_latestUpdate.Url)) return;
+        var update = _latestUpdate;
         try
         {
-            Process.Start(new ProcessStartInfo(_latestUpdate.Url) { UseShellExecute = true });
+            BtnUpdate.IsEnabled = false;
+            TxtUpdateInfo.Text = "Atualizando...";
+            var progress = new Progress<string>(m => Dispatcher.Invoke(() => TxtUpdateInfo.Text = m));
+            bool restarting = await AppUpdater.ApplyAsync(update, progress);
+            if (restarting)
+            {
+                TxtUpdateInfo.Text = $"Atualização {update.Version} aplicada. O app será reiniciado.";
+                // Encerra este processo após o novo iniciar (o novo exe é independente).
+                await Task.Delay(1500);
+                Application.Current.Shutdown();
+            }
+            else
+            {
+                TxtUpdateInfo.Text = "A atualização não pôde ser aplicada. Tente novamente.";
+            }
         }
         catch (Exception ex)
         {
-            ShowConnectError("Não foi possível abrir o download: " + ex.Message);
+            TxtUpdateInfo.Text = "Erro: " + ex.Message;
+        }
+        finally
+        {
+            BtnUpdate.IsEnabled = true;
         }
     }
 

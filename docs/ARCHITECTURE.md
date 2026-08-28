@@ -16,8 +16,8 @@ O `RemoteEternal.Server` (C#) permanece no código como legado: os testes de int
 O App fala com a API Node.js via **HTTP REST + WebSocket** (não existe mais servidor TCP C# ativo). O acesso usa um ID de host de seis dígitos, sem contas de usuário ou login. Endpoints (`/api`):
 
 - `GET /api/health` — saúde e versão da API.
-- `POST /api/hosts/register` `{deviceName, os}` → `{ok, hostId}` — atribui um ID único de 6 dígitos.
-- `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier, advertisedAddress?}` → `{ok}` — anuncia o host online; a API valida `advertisedAddress` quando presente como IPv4 literal alcançável pelo cliente e o usa somente para roteamento da sessão direta. O modo de acesso e as credenciais do modo não assistido continuam tratando autorização separadamente do endereço.
+- `POST /api/hosts/register` `{deviceName, os, machineId?}` → `{ok, hostId}` — atribui um ID único de 6 dígitos; com `machineId` (derivado do MAC da máquina) já conhecido, reutiliza o `hostId` existente em vez de criar registro novo.
+- `POST /api/hosts/online` `{hostId, deviceName, os, listenPort, accessMode, salt, verifier, advertisedAddress?, machineId?}` → `{ok}` — anuncia o host online; a API valida `advertisedAddress` quando presente como IPv4 literal alcançável pelo cliente e o usa somente para roteamento da sessão direta. O modo de acesso e as credenciais do modo não assistido continuam tratando autorização separadamente do endereço. Quando `machineId` é enviado, a API exige correspondência com o `machine_id` registrado (divergência → 403).
 - `GET /api/hosts/:hostId/salt` → `{ok, accessMode, salt}` — consulta o salt e o modo do host.
 - `POST /api/hosts/:hostId/lookup` `{authHash}` → `{ok, ip, port, sessionToken}` — valida a autorização e, após a aceitação, devolve o endereço anunciado pelo host (com fallback legado quando ausente), a porta e o token; o IP observado pela API é usado apenas para contexto e rate limit.
 - `GET /api/update/latest?currentVersion=X` → `{ok, update: {version, url, sizeBytes, sha256, fileCount, notes} | null}` — verificação de atualização do App.
@@ -42,7 +42,7 @@ A arquitetura atual depende de conectividade direta entre host e cliente. NAT tr
 
 - `src/index.js`: aplicação Express + HTTP + WebSocket, rotas do plano de controle e canal WS do host.
 - `src/db.js`: pool `pg` (formato Aiven `DB_*` ou `DATABASE_URL`), SSL com CA e `initDb()`.
-- `src/schema.sql`: `CREATE TABLE IF NOT EXISTS hosts`.
+- `src/schema.sql`: `CREATE TABLE IF NOT EXISTS hosts` e migração `ALTER TABLE hosts ADD COLUMN IF NOT EXISTS machine_id VARCHAR(128)` (identidade estável da máquina do host).
 - `src/registry.js`: diretório em memória de hosts online (`HostRegistry`) e de pendências de lookup.
 - `src/rateLimit.js`: `RateLimiter` — 5 falhas de lookup por IP em 60 segundos.
 - `src/update.js`: catálogo `RELEASES` com manifest (`version, url, sizeBytes, sha256, fileCount, notes`); `CURRENT_VERSION` derivada; hospedagem GitHub Releases.

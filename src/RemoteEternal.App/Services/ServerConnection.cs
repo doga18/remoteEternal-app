@@ -66,13 +66,13 @@ public sealed class ServerConnection : IAsyncDisposable
         Interlocked.Exchange(ref _disconnectedRaised, 0);
     }
 
-    public Task<RegisterHostResult> RegisterHostAsync(string deviceName, string os) =>
-        HttpPostAsync<RegisterHostResult>("api/hosts/register", new { deviceName, os });
+    public Task<RegisterHostResult> RegisterHostAsync(string deviceName, string os, string? machineId = null) =>
+        HttpPostAsync<RegisterHostResult>("api/hosts/register", new { deviceName, os, machineId });
 
     public Task<HostOnlineResult> HostOnlineAsync(string hostId, string deviceName, string os,
-        int listenPort, string accessMode, string? saltB64, string? verifierB64, string? advertisedAddress = null) =>
+        int listenPort, string accessMode, string? saltB64, string? verifierB64, string? advertisedAddress = null, string? machineId = null) =>
         HttpPostAsync<HostOnlineResult>("api/hosts/online",
-            new { hostId, deviceName, os, listenPort, accessMode, salt = saltB64, verifier = verifierB64, advertisedAddress });
+            new { hostId, deviceName, os, listenPort, accessMode, salt = saltB64, verifier = verifierB64, advertisedAddress, machineId });
 
     public Task<GetHostSaltResult> GetHostSaltAsync(string hostId) =>
         HttpGetAsync<GetHostSaltResult>($"api/hosts/{Uri.EscapeDataString(hostId)}/salt");
