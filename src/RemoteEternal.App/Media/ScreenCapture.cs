@@ -78,6 +78,7 @@ public sealed unsafe class ScreenCapture : IDisposable
         AVPacket* packet = null;
         try
         {
+            FfmpegLibrary.EnsureLoaded();
             FeatureLevel[] fl = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_1 };
             var result = D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport, fl,
                 out D3D11Dev? device, out FeatureLevel _, out D3D11Ctx? context);
@@ -95,11 +96,16 @@ public sealed unsafe class ScreenCapture : IDisposable
             Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top;
             DiagnosticLog.Write("ScreenCapture", $"capturando {desc.DeviceName} {Width}x{Height} @ {fps}fps {bitrateKbps}kbps");
 
+            DiagnosticLog.Write("ScreenCapture", "step1: criando staging texture...");
             staging = dev.CreateTexture2D(Format.B8G8R8A8_UNorm, (uint)Width, (uint)Height, 1, 1, null,
                 BindFlags.None, ResourceOptionFlags.None, ResourceUsage.Staging, CpuAccessFlags.Read);
+            DiagnosticLog.Write("ScreenCapture", "step1 OK: staging criada");
 
+
+            DiagnosticLog.Write("ScreenCapture", "step2: procurando encoder h264_nvenc...");
             var codec = ffmpeg.avcodec_find_encoder_by_name("h264_nvenc");
             if (codec == null) { ReportFail("h264_nvenc não encontrado"); return; }
+            DiagnosticLog.Write("ScreenCapture", "step2 OK: encoder encontrado");
             enc = ffmpeg.avcodec_alloc_context3(codec);
             enc->width = Width; enc->height = Height;
             enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_NV12;
@@ -113,6 +119,7 @@ public sealed unsafe class ScreenCapture : IDisposable
             ffmpeg.av_dict_set(&opts, "tune", "ll", 0);
             ffmpeg.av_dict_set(&opts, "zerolatency", "1", 0);
             ffmpeg.av_dict_set(&opts, "rc", "cbr", 0);
+            DiagnosticLog.Write("ScreenCapture", "step3: abrindo encoder nvenc...");
             int ret = ffmpeg.avcodec_open2(enc, codec, &opts);
             ffmpeg.av_dict_free(&opts);
             if (ret < 0) { ReportFail("avcodec_open2: " + Err(ret)); return; }
