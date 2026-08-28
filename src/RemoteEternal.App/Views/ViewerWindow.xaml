@@ -47,6 +47,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Border Background="{StaticResource BarBrush}" Padding="10,6">
@@ -69,5 +70,13 @@
                    MouseMove="OnImageMouseMove" MouseDown="OnImageMouseDown" MouseUp="OnImageMouseUp"
                    MouseWheel="OnImageMouseWheel" Focusable="True"/>
         </Grid>
+
+        <Expander Grid.Row="2" Header="Diagnóstico" Background="{StaticResource BarBrush}"
+                  Foreground="{StaticResource TextBrush}" IsExpanded="False">
+            <TextBox x:Name="TxtDiagnostics" IsReadOnly="True" FontFamily="Consolas" FontSize="11"
+                     MaxHeight="110" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"
+                     HorizontalScrollBarVisibility="Auto" Background="#FF141519"
+                     Foreground="{StaticResource TextBrush}" BorderThickness="0"/>
+        </Expander>
     </Grid>
 </Window>

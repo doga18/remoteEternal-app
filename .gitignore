@@ -8,6 +8,7 @@ bin/
 obj/
 publish/
 libs/
+computador_cliente/
 
 # Diretórios locais do ambiente de trabalho (não fazem parte do produto)
 lancedb/
@@ -32,3 +33,6 @@ aiven-ca.pem
 opencode.json
 
 dist/
+
+# Backup local (RAR) — não versionar
+*.rar

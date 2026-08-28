@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace RemoteEternal.App.Services;
 
@@ -38,6 +39,39 @@ public static class MonitorEnumeration
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx info);
 
+    private static readonly Regex DisplayIdentityPattern = new(
+        @"(?:^|[\\/])DISPLAY(?<number>[0-9]+)(?:$|[\\/])",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    public static string Canonicalize(string deviceName)
+    {
+        if (!TryGetDisplayIdentity(deviceName, out int number))
+            return deviceName.Trim();
+        return $"\\\\.\\DISPLAY{number}";
+    }
+
+    public static string FriendlyName(string deviceName)
+    {
+        return TryGetDisplayIdentity(deviceName, out int number)
+            ? $"DISPLAY{number}"
+            : deviceName.Trim();
+    }
+
+    public static bool SameDisplay(string left, string right)
+    {
+        if (!TryGetDisplayIdentity(left, out int leftNumber) ||
+            !TryGetDisplayIdentity(right, out int rightNumber))
+            return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+        return leftNumber == rightNumber;
+    }
+
+    private static bool TryGetDisplayIdentity(string deviceName, out int number)
+    {
+        number = 0;
+        var match = DisplayIdentityPattern.Match(deviceName.Trim());
+        return match.Success && int.TryParse(match.Groups["number"].Value, out number);
+    }
+
     public static List<MonitorInfo> GetMonitors()
     {
         var result = new List<MonitorInfo>();
@@ -48,7 +82,7 @@ public static class MonitorEnumeration
             {
                 result.Add(new MonitorInfo
                 {
-                    DeviceName = info.DeviceName.TrimStart('\\', '.'),
+                    DeviceName = Canonicalize(info.DeviceName),
                     Left = info.Monitor.Left,
                     Top = info.Monitor.Top,
                     Right = info.Monitor.Right,
@@ -63,8 +97,6 @@ public static class MonitorEnumeration
 
     public static MonitorInfo? Find(string deviceName)
     {
-        var name = deviceName.TrimStart('\\', '.');
-        return GetMonitors().FirstOrDefault(m =>
-            string.Equals(m.DeviceName, name, StringComparison.OrdinalIgnoreCase));
+        return GetMonitors().FirstOrDefault(m => SameDisplay(m.DeviceName, deviceName));
     }
 }

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading;
 using RemoteEternal.Core.Crypto;
 
 namespace RemoteEternal.App.Services;
@@ -9,6 +10,18 @@ public sealed class SessionStream : Stream
     private readonly SemaphoreSlim _slots = new(4, 4);
     private long _pos;
     private volatile bool _stopped;
+
+    // Diagnóstico observacional: contadores atômicos de blocos/bytes escritos e de
+    // envios com falha. Não altera a semântica de escrita/envio (mesma ordem, mesmos
+    // buffers, mesmos slots).
+    private long _framesWritten;
+    private long _bytesWritten;
+    private long _framesFailed;
+    private long _lastLoggedFrame;
+
+    public long FramesWritten => Interlocked.Read(ref _framesWritten);
+    public long BytesWritten => Interlocked.Read(ref _bytesWritten);
+    public long FramesFailed => Interlocked.Read(ref _framesFailed);
 
     public SessionStream(SecureFrameChannel channel) => _channel = channel;
 
@@ -31,6 +44,7 @@ public sealed class SessionStream : Stream
         var data = new byte[count];
         Array.Copy(buffer, offset, data, 0, count);
         _pos += count;
+        TrackWrite(count);
         _slots.Wait();
         _ = SendAndReleaseAsync(data);
     }
@@ -41,8 +55,24 @@ public sealed class SessionStream : Stream
         var data = new byte[count];
         Array.Copy(buffer, offset, data, 0, count);
         _pos += count;
+        TrackWrite(count);
         _slots.Wait(cancellationToken);
         return SendAndReleaseAsync(data);
+    }
+
+    /// <summary>Incrementa os contadores e registra o progresso a cada 30 blocos
+    /// (aproximadamente 1 vez por segundo a 30 fps), sem inundar o log.</summary>
+    private void TrackWrite(int count)
+    {
+        long frameNumber = Interlocked.Increment(ref _framesWritten);
+        Interlocked.Add(ref _bytesWritten, count);
+        long last = Interlocked.Read(ref _lastLoggedFrame);
+        if (frameNumber - last >= 30 &&
+            Interlocked.CompareExchange(ref _lastLoggedFrame, frameNumber, last) == last)
+        {
+            DiagnosticLog.Write("SessionCapture",
+                $"SessionStream: frames={FramesWritten} bytes={BytesWritten} falhas={FramesFailed}");
+        }
     }
 
     private async Task SendAndReleaseAsync(byte[] data)
@@ -51,8 +81,10 @@ public sealed class SessionStream : Stream
         {
             await _channel.SendAsync(SecureFrameChannel.TypeMedia, data).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
+            Interlocked.Increment(ref _framesFailed);
+            DiagnosticLog.Write("SessionCapture", $"SessionStream: falha ao enviar frame: {ex.GetType().Name}");
         }
         finally
         {
@@ -60,7 +92,11 @@ public sealed class SessionStream : Stream
         }
     }
 
-    public void Stop() => _stopped = true;
+    public void Stop()
+    {
+        _stopped = true;
+        DiagnosticLog.Write("SessionCapture", "SessionStream: parado");
+    }
 
     protected override void Dispose(bool disposing)
     {

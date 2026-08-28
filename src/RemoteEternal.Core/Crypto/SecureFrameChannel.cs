@@ -122,27 +122,31 @@ public sealed class SecureFrameChannel
 
     public async Task SendAsync(byte type, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
     {
-        long counter = Interlocked.Increment(ref _sendCounter);
-        byte[] nonce = RandomNumberGenerator.GetBytes(12);
-
-        byte[] aad = new byte[9];
-        aad[0] = type;
-        BinaryPrimitives.WriteInt64LittleEndian(aad.AsSpan(1), counter);
-
-        byte[] cipher = new byte[payload.Length];
-        byte[] tag = new byte[16];
-        using (var aes = new AesGcm(_keyWrite, 16))
-        {
-            aes.Encrypt(nonce, payload.Span, cipher, tag, aad);
-        }
-
-        int total = 1 + 12 + cipher.Length + 16;
-        byte[] header = new byte[4];
-        BinaryPrimitives.WriteInt32LittleEndian(header, total);
+        const int overhead = 1 + 12 + 16;
+        if (payload.Length > FrameChannel.MaxFrameSize - overhead)
+            throw new ArgumentOutOfRangeException(nameof(payload), "Payload exceeds the secure frame size limit.");
 
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            long counter = Interlocked.Increment(ref _sendCounter);
+            byte[] nonce = RandomNumberGenerator.GetBytes(12);
+
+            byte[] aad = new byte[9];
+            aad[0] = type;
+            BinaryPrimitives.WriteInt64LittleEndian(aad.AsSpan(1), counter);
+
+            byte[] cipher = new byte[payload.Length];
+            byte[] tag = new byte[16];
+            using (var aes = new AesGcm(_keyWrite, 16))
+            {
+                aes.Encrypt(nonce, payload.Span, cipher, tag, aad);
+            }
+
+            int total = overhead + cipher.Length;
+            byte[] header = new byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(header, total);
+
             await _stream.WriteAsync(header, ct).ConfigureAwait(false);
             await _stream.WriteAsync(new[] { type }, ct).ConfigureAwait(false);
             await _stream.WriteAsync(nonce, ct).ConfigureAwait(false);

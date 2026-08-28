@@ -87,6 +87,64 @@ public sealed class CoreProtocolTests
     }
 
     [Fact]
+    public async Task SecureFrameChannel_ConcurrentSendsArriveCompleteAndDecryptInWireOrder()
+    {
+        await using var pair = await ConnectedPair.CreateAsync();
+        var host = SecureFrameChannel.CreateDirectional(pair.Server, Secret, Salt, Info, SessionRole.Host);
+        var client = SecureFrameChannel.CreateDirectional(pair.Client, Secret, Salt, Info, SessionRole.Client);
+        const int count = 64;
+        var payloads = Enumerable.Range(0, count)
+            .Select(i => Encoding.UTF8.GetBytes($"concurrent-payload-{i:D3}-" + new string((char)('a' + i % 26), i + 1)))
+            .ToArray();
+
+        await Task.WhenAll(payloads.Select((payload, i) =>
+            host.SendAsync(i % 2 == 0 ? SecureFrameChannel.TypeControl : SecureFrameChannel.TypeMedia, payload)));
+
+        var received = new List<(byte Type, byte[] Payload)>();
+        for (var i = 0; i < count; i++)
+            received.Add(await client.ReceiveAsync());
+
+        Assert.Equal(count, received.Count);
+        var expected = payloads.Select((payload, i) =>
+            (Key: Convert.ToBase64String(payload), Type: (byte)(i % 2 == 0 ? SecureFrameChannel.TypeControl : SecureFrameChannel.TypeMedia)))
+            .OrderBy(x => x.Key)
+            .ToArray();
+        var actual = received.Select(x =>
+            (Key: Convert.ToBase64String(x.Payload), Type: x.Type))
+            .OrderBy(x => x.Key)
+            .ToArray();
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task SecureFrameChannel_SessionHelloWithThreeDisplaysRoundTripsAsEnvelope()
+    {
+        await using var pair = await ConnectedPair.CreateAsync();
+        var host = SecureFrameChannel.CreateDirectional(pair.Server, Secret, Salt, Info, SessionRole.Host);
+        var client = SecureFrameChannel.CreateDirectional(pair.Client, Secret, Salt, Info, SessionRole.Client);
+        var hello = new SessionHello("QA-host", new[]
+        {
+            new DisplayInfo("display-1", "Primary", 1920, 1080, 0, 0),
+            new DisplayInfo("display-2", "Left", 1280, 1024, -1280, 0),
+            new DisplayInfo("display-3", "Above", 1024, 768, 0, -768)
+        }, 1);
+
+        await host.SendAsync(SecureFrameChannel.TypeControl, EnvelopeUtil.Create(SessionControlTypes.Hello, hello));
+        var frame = await client.ReceiveAsync();
+        var envelope = EnvelopeUtil.Parse(frame.Payload);
+        var parsed = EnvelopeUtil.Data<SessionHello>(envelope);
+
+        Assert.Equal(SecureFrameChannel.TypeControl, frame.Type);
+        Assert.Equal(SessionControlTypes.Hello, envelope.Type);
+        Assert.NotNull(parsed);
+        Assert.Equal("QA-host", parsed!.DeviceName);
+        Assert.Equal(1, parsed.DefaultDisplayIndex);
+        Assert.Equal(3, parsed.Displays.Length);
+        Assert.Equal(-1280, parsed.Displays[1].Left);
+        Assert.Equal(768, parsed.Displays[2].Height);
+    }
+
+    [Fact]
     public async Task SecureFrameChannel_TamperAndWrongRoleFailAuthentication()
     {
         await using (var pair = await ConnectedPair.CreateAsync())

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
@@ -37,53 +38,91 @@ public partial class ViewerWindow : Window
             TxtStats.Text = $"{_fpsCounter} fps · {_frameWidth}x{_frameHeight}";
             _fpsCounter = 0;
         };
-        _client.HelloReceived += OnHello;
-        _client.MediaRestarted += OnMediaRestart;
-        _client.ErrorReceived += msg => Dispatcher.Invoke(() => ShowError(msg));
-        _client.Ended += reason => Dispatcher.Invoke(() => CloseSession(reason));
-        _client.Closed += () => Dispatcher.Invoke(() => CloseSession("Conexão perdida"));
+        _client.Connected += () => Dispatcher.InvokeAsync(() => TxtStatus.Text = "Aguardando informações da tela...");
+        _client.MediaRestarted += () => Dispatcher.InvokeAsync(OnMediaRestart);
+        _client.ErrorReceived += msg => Dispatcher.InvokeAsync(() => ShowError(msg));
+        _client.Ended += reason => Dispatcher.InvokeAsync(() => CloseSession(reason));
+        _client.Closed += () => Dispatcher.InvokeAsync(() =>
+        {
+            // Durante o handshake o motivo de falha é exibido pelo fluxo de ConnectAsync;
+            // somente após o hello a perda de conexão deve encerrar a janela.
+            if (_closing || _hello is null) return;
+            CloseSession("Conexão perdida");
+        });
+        DiagnosticLog.LineWritten += OnDiagnosticLine;
         Loaded += async (_, _) =>
         {
             TxtTitle.Text = deviceName;
             Title = $"RemoteEternal - {deviceName}";
             _statsTimer.Start();
+            TxtStatus.Text = "Conectando ao host...";
             try
             {
-                await _client.ConnectAsync(ip, port, token);
+                SessionHello hello = await _client.ConnectAsync(ip, port, token);
+                if (_closing) return;
+                OnHello(hello);
             }
             catch (Exception ex)
             {
-                ShowError("Falha ao conectar: " + ex.Message +
-                    ". Confirme que o host está na mesma rede (LAN) e que a porta de acesso está liberada no firewall.");
+                if (_closing) return;
+                ShowError(FormatConnectError(ex));
             }
         };
     }
 
+    private void OnDiagnosticLine(string line)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            TxtDiagnostics.AppendText(line + Environment.NewLine);
+            TrimDiagnostics();
+        });
+    }
+
+    private void TrimDiagnostics()
+    {
+        const int maxLines = 500;
+        while (TxtDiagnostics.LineCount > maxLines)
+        {
+            int idx = TxtDiagnostics.Text.IndexOf('\n');
+            if (idx < 0) break;
+            TxtDiagnostics.Text = TxtDiagnostics.Text.Substring(idx + 1);
+        }
+        TxtDiagnostics.ScrollToEnd();
+    }
+
     private void OnHello(SessionHello hello)
     {
-        Dispatcher.Invoke(() =>
+        if (hello is null || hello.Displays is null || hello.Displays.Length == 0)
         {
-            _hello = hello;
-            _suppressMonitorEvent = true;
-            CboMonitor.Items.Clear();
-            foreach (var d in hello.Displays)
-                CboMonitor.Items.Add($"{d.Name} ({d.Width}x{d.Height})");
-            CboMonitor.SelectedIndex = Math.Clamp(hello.DefaultDisplayIndex, 0, Math.Max(0, hello.Displays.Length - 1));
-            _suppressMonitorEvent = false;
-            _currentDisplay = hello.Displays[CboMonitor.SelectedIndex].Id;
-            StartDecoder();
-            _ = _client.SendStartAsync(_currentDisplay, Fps, BitrateKbps, Quality, true);
-        });
+            ShowError("O host não enviou informações de tela válidas.");
+            return;
+        }
+        _hello = hello;
+        _suppressMonitorEvent = true;
+        CboMonitor.Items.Clear();
+        foreach (var d in hello.Displays)
+            CboMonitor.Items.Add($"{d.Name} ({d.Width}x{d.Height})");
+        int defaultIndex = Math.Clamp(hello.DefaultDisplayIndex, 0, hello.Displays.Length - 1);
+        CboMonitor.SelectedIndex = defaultIndex;
+        _suppressMonitorEvent = false;
+        _currentDisplay = hello.Displays[defaultIndex].Id;
+        // O decoder NÃO é aberto aqui. O host só inicia o envio de mídia depois de receber o
+        // start e sinaliza isso com SessionMediaRestart; o cliente então limpa o MediaBuffer
+        // (Media.Clear() em SessionClient.HandleControl) e dispara OnMediaRestart, que chama
+        // StartDecoder() sobre o buffer já limpo — garantindo que o FfmpegDecoder lê o stream
+        // MP4 fragmentado desde o início (ftyp/moov). Abrir o decoder aqui criaria um primeiro
+        // decoder que bloqueia e consome o início do stream; quando o mediaRestart chegar, o
+        // StartDecoder() seguinte leria dados do meio do stream já consumidos, causando
+        // "Invalid data found when processing input".
+        _ = _client.SendStartAsync(_currentDisplay, Fps, BitrateKbps, Quality, true);
     }
 
     private void OnMediaRestart()
     {
-        Dispatcher.Invoke(() =>
-        {
-            TxtStatus.Visibility = Visibility.Visible;
-            TxtStatus.Text = "Reiniciando vídeo...";
-            StartDecoder();
-        });
+        TxtStatus.Visibility = Visibility.Visible;
+        TxtStatus.Text = "Reiniciando vídeo...";
+        StartDecoder();
     }
 
     private void StartDecoder()
@@ -314,8 +353,16 @@ public partial class ViewerWindow : Window
         TxtStatus.Text = message;
     }
 
+    private static string FormatConnectError(Exception ex) => ex switch
+    {
+        TimeoutException t when !string.IsNullOrEmpty(t.Message) => t.Message,
+        IOException io when !string.IsNullOrEmpty(io.Message) => io.Message,
+        _ => "Não foi possível estabelecer a sessão remota."
+    };
+
     protected override void OnClosed(EventArgs e)
     {
+        DiagnosticLog.LineWritten -= OnDiagnosticLine;
         _statsTimer.Stop();
         if (!_closing)
         {

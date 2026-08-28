@@ -1,24 +1,47 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
+using RemoteEternal.App.Services;
 
 namespace RemoteEternal.App.Media;
 
 public sealed class MediaBuffer : IDisposable
 {
+    // Buffer contínuo e SEEKABLE: os dados recebidos são acumulados em segmentos de
+    // 64 KB e podem ser lidos em QUALQUER posição já recebida (pos < Length).
+    // O demuxer mov do FFmpeg precisa de seek para MP4 fragmentado ao vivo com
+    // custom IO: sem poder voltar ao moov/moof já recebidos, av_read_frame trava
+    // após o primeiro fragmento e o vídeo congela no primeiro frame (FPS 0).
+    private const int SegmentSize = 64 * 1024;
     private readonly object _lock = new();
-    private readonly Queue<byte[]> _chunks = new();
-    private readonly Queue<byte[]> _free = new();
+    private readonly List<byte[]> _segments = new();
+    private long _length;
     private bool _closed;
     private bool _wakeAbort;
 
+    public long Length
+    {
+        get { lock (_lock) return _length; }
+    }
+
     public void Write(byte[] data, int offset, int count)
     {
-        byte[] chunk = TakeFree(count);
-        Array.Copy(data, offset, chunk, 0, count);
         lock (_lock)
         {
+            int written = 0;
+            while (written < count)
+            {
+                long idx = _length + written;
+                int segIdx = (int)(idx / SegmentSize);
+                while (_segments.Count <= segIdx) _segments.Add(new byte[SegmentSize]);
+                var seg = _segments[segIdx];
+                int segOff = (int)(idx % SegmentSize);
+                int n = Math.Min(SegmentSize - segOff, count - written);
+                Array.Copy(data, offset + written, seg, segOff, n);
+                written += n;
+            }
+            _length += count;
             _wakeAbort = false;
-            _chunks.Enqueue(chunk);
             Monitor.PulseAll(_lock);
         }
     }
@@ -27,7 +50,8 @@ public sealed class MediaBuffer : IDisposable
     {
         lock (_lock)
         {
-            while (_chunks.Count > 0) _free.Enqueue(_chunks.Dequeue());
+            _segments.Clear();
+            _length = 0;
             Monitor.PulseAll(_lock);
         }
     }
@@ -41,33 +65,34 @@ public sealed class MediaBuffer : IDisposable
         }
     }
 
-    public int Read(byte[] dst, int max, bool wait)
+    /// <summary>
+    /// Lê até <paramref name="max"/> bytes a partir da posição <paramref name="pos"/>.
+    /// Bloqueia (ciclos de 200 ms) enquanto a posição ainda não foi recebida.
+    /// Retorna 0 em EOF (fechado/abortado).
+    /// </summary>
+    public int ReadAt(long pos, byte[] dst, int max)
     {
         lock (_lock)
         {
-            while (_chunks.Count == 0)
+            while (pos >= _length)
             {
                 if (_closed || _wakeAbort) return 0;
-                if (!wait) return -1;
                 Monitor.Wait(_lock, 200);
             }
-            byte[] chunk = _chunks.Peek();
-            int n = Math.Min(chunk.Length, max);
-            Array.Copy(chunk, 0, dst, 0, n);
-            if (n == chunk.Length)
+            long available = _length - pos;
+            int n = (int)Math.Min(max, available);
+            int dstOff = 0;
+            long cur = pos;
+            int remaining = n;
+            while (remaining > 0)
             {
-                _chunks.Dequeue();
-                _free.Enqueue(chunk);
-            }
-            else
-            {
-                var rest = TakeFree(chunk.Length - n);
-                Array.Copy(chunk, n, rest, 0, chunk.Length - n);
-                _free.Enqueue(chunk);
-                var list = new List<byte[]> { rest };
-                list.AddRange(_chunks.Skip(1));
-                _chunks.Clear();
-                foreach (var c in list) _chunks.Enqueue(c);
+                var seg = _segments[(int)(cur / SegmentSize)];
+                int segOff = (int)(cur % SegmentSize);
+                int take = Math.Min(SegmentSize - segOff, remaining);
+                Array.Copy(seg, segOff, dst, dstOff, take);
+                dstOff += take;
+                cur += take;
+                remaining -= take;
             }
             return n;
         }
@@ -79,20 +104,6 @@ public sealed class MediaBuffer : IDisposable
         {
             _closed = true;
             Monitor.PulseAll(_lock);
-        }
-    }
-
-    private byte[] TakeFree(int minSize)
-    {
-        lock (_lock)
-        {
-            byte[]? best = null;
-            while (_free.Count > 0)
-            {
-                var c = _free.Dequeue();
-                if (c.Length >= minSize) { best = c; break; }
-            }
-            return best ?? new byte[Math.Max(minSize, 64 * 1024)];
         }
     }
 
@@ -114,6 +125,18 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     private Thread? _thread;
     private readonly ManualResetEventSlim _threadDone = new();
     private byte[] _rgba = Array.Empty<byte>();
+
+    // Diagnóstico observacional (não altera o fluxo de decodificação): salva os
+    // primeiros bytes de mídia recebidos em %APPDATA%\RemoteEternal\media-dump.bin
+    // e registra o hex inicial no DiagnosticLog. O dump é feito no ReadCallback
+    // para não consumir dados do MediaBuffer nem interferir no avformat_open_input.
+    private static readonly string MediaDumpPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "RemoteEternal", "media-dump.bin");
+    private const int MediaDumpLimit = 512 * 1024;
+    private FileStream? _mediaDumpStream;
+    private int _mediaDumpWritten;
+    private bool _mediaDumpDone;
 
     public int VideoWidth { get; private set; }
     public int VideoHeight { get; private set; }
@@ -145,8 +168,25 @@ public unsafe sealed class FfmpegDecoder : IDisposable
         fmt->probesize = 1024 * 1024;
         fmt->max_analyze_duration = 5 * AV_TIME_BASE;
 
-        int ret = ffmpeg.avformat_open_input(&fmt, null, null, null);
-        if (ret < 0) throw new InvalidOperationException($"avformat_open_input: {Error(ret)}");
+        // O host (ScreenRecorderLib) produz MP4 fragmentado (ftyp/moov/moof/mdat) e o
+        // stream chega via custom IO em blocos parciais espaçados no tempo. A detecção
+        // automática de formato (format = null) depende do probe nos primeiros bytes e
+        // pode falhar com "Invalid data found when processing input" nesse fluxo.
+        // Forçar o demuxer mov evita o probe e usa a leitura com wait do MediaBuffer
+        // (ReadCallback com wait:true acumula os blocos até o header estar completo).
+        var inputFormat = ffmpeg.av_find_input_format("mov");
+        int ret;
+        if (inputFormat is null)
+        {
+            // Fallback para builds sem o demuxer mov: mantém a detecção automática.
+            ret = ffmpeg.avformat_open_input(&fmt, null, null, null);
+            if (ret < 0) throw new InvalidOperationException($"avformat_open_input: {Error(ret)}");
+        }
+        else
+        {
+            ret = ffmpeg.avformat_open_input(&fmt, null, inputFormat, null);
+            if (ret < 0) throw new InvalidOperationException($"avformat_open_input: {Error(ret)}");
+        }
         _fmt = fmt;
 
         ret = ffmpeg.avformat_find_stream_info(_fmt, null);
@@ -328,16 +368,99 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     {
         var self = (FfmpegDecoder?)GCHandle.FromIntPtr((IntPtr)opaque).Target;
         if (self is null || self._disposed) return AVERROR_EOF;
+        long pos = self._avio->pos;
         byte[] tmp = new byte[bufferSize];
-        int n = self._buffer.Read(tmp, bufferSize, wait: true);
+        int n = self._buffer.ReadAt(pos, tmp, bufferSize);
         if (n <= 0) return AVERROR_EOF;
         Marshal.Copy(tmp, 0, (IntPtr)buffer, n);
+        self.RecordMediaDump(tmp, n);
         return n;
     }
 
+    /// <summary>
+    /// Diagnóstico observacional: grava os primeiros 512 KB do fluxo de mídia em
+    /// <c>%APPDATA%\RemoteEternal\media-dump.bin</c> e registra o hex da primeira
+    /// leitura. Nunca lança e nunca altera o retorno da leitura.
+    /// </summary>
+    private void RecordMediaDump(byte[] data, int count)
+    {
+        try
+        {
+            if (_mediaDumpStream is null && !_mediaDumpDone)
+            {
+                string dir = Path.GetDirectoryName(MediaDumpPath) ?? "";
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                _mediaDumpStream = new FileStream(MediaDumpPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                DiagnosticLog.Write("FfmpegDecoder",
+                    $"primeira leitura: {count} bytes; hex16={BitConverter.ToString(data, 0, Math.Min(16, count))}");
+            }
+
+            if (_mediaDumpDone || _mediaDumpStream is null) return;
+
+            int remaining = MediaDumpLimit - _mediaDumpWritten;
+            if (remaining <= 0)
+            {
+                CompleteMediaDump();
+                return;
+            }
+
+            int toWrite = Math.Min(count, remaining);
+            _mediaDumpStream.Write(data, 0, toWrite);
+            _mediaDumpWritten += toWrite;
+
+            if (_mediaDumpWritten >= MediaDumpLimit)
+            {
+                CompleteMediaDump();
+            }
+        }
+        catch
+        {
+            // Nunca interfira na decodificação por causa do diagnóstico.
+            try { _mediaDumpStream?.Dispose(); } catch { }
+            _mediaDumpStream = null;
+            _mediaDumpDone = true;
+        }
+    }
+
+    private void CompleteMediaDump()
+    {
+        try
+        {
+            _mediaDumpStream?.Dispose();
+        }
+        catch
+        {
+        }
+        _mediaDumpStream = null;
+        _mediaDumpDone = true;
+        DiagnosticLog.Write("FfmpegDecoder", $"media-dump salvo: {MediaDumpPath} ({_mediaDumpWritten} bytes)");
+    }
+
+    private const int SEEK_SET = 0;
+    private const int SEEK_CUR = 1;
+    private const int SEEK_END = 2;
+    private const int AVSEEK_SIZE = 0x10000;
+
+    /// <summary>
+    /// Seek real sobre os dados já recebidos. Permite ao demuxer mov voltar ao
+    /// moov/moof (offset conhecido) sem travar; seek além do recebido retorna -1
+    /// (o FFmpeg lê sequencialmente quando o dado chega).
+    /// </summary>
     private static long SeekCallback(void* opaque, long offset, int whence)
     {
-        return -1;
+        var self = (FfmpegDecoder?)GCHandle.FromIntPtr((IntPtr)opaque).Target;
+        if (self is null || self._disposed) return -1;
+        long newPos;
+        switch (whence)
+        {
+            case SEEK_SET: newPos = offset; break;
+            case SEEK_CUR: newPos = self._avio->pos + offset; break;
+            case SEEK_END: newPos = self._buffer.Length + offset; break;
+            case AVSEEK_SIZE: newPos = self._buffer.Length; break;
+            default: newPos = -1; break;
+        }
+        if (whence != AVSEEK_SIZE && (newPos < 0 || newPos > self._buffer.Length)) return -1;
+        return newPos;
     }
 
     private static string Error(int code)
@@ -354,6 +477,14 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        // Libera o dump de diagnóstico caso a sessão termine antes de completar.
+        if (!_mediaDumpDone)
+        {
+            try { _mediaDumpStream?.Dispose(); } catch { }
+            _mediaDumpStream = null;
+            _mediaDumpDone = true;
+            DiagnosticLog.Write("FfmpegDecoder", $"media-dump parcial fechado: {MediaDumpPath} ({_mediaDumpWritten} bytes)");
+        }
         _buffer.WakeAbort();
         if (!_threadDone.Wait(3000)) return; // thread não saiu; evita liberar memória em uso
         if (_fmt is not null)

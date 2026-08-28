@@ -1,0 +1,7 @@
+{
+  "name": "remoteeternal",
+  "private": true,
+  "scripts": {
+    "api": "npm --prefix api start"
+  }
+}

@@ -30,6 +30,28 @@ public partial class MainWindow : Window
         {
             if (active) TxtHostStatus.Text = "Sessão remota ATIVA";
         });
+        DiagnosticLog.LineWritten += OnDiagnosticLine;
+    }
+
+    private void OnDiagnosticLine(string line)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            TxtDiagnostics.AppendText(line + Environment.NewLine);
+            TrimDiagnostics();
+        });
+    }
+
+    private void TrimDiagnostics()
+    {
+        const int maxLines = 500;
+        while (TxtDiagnostics.LineCount > maxLines)
+        {
+            int idx = TxtDiagnostics.Text.IndexOf('\n');
+            if (idx < 0) break;
+            TxtDiagnostics.Text = TxtDiagnostics.Text.Substring(idx + 1);
+        }
+        TxtDiagnostics.ScrollToEnd();
     }
 
     private async void OnConnectServerClick(object sender, RoutedEventArgs e)
@@ -430,6 +452,7 @@ public partial class MainWindow : Window
 
     protected override async void OnClosed(EventArgs e)
     {
+        DiagnosticLog.LineWritten -= OnDiagnosticLine;
         await _host.DisposeAsync();
         if (_conn is not null) await _conn.DisposeAsync();
         base.OnClosed(e);
