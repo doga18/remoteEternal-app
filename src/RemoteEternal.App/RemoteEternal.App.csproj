@@ -70,7 +70,12 @@
        .NET 8 implanta a versão 8.0.x do framework. Copiamos a DLL 9.0.1 do pacote NuGet
        após o publish para alinhar com o deps.json (evita "Could not load System.Text.Json 9.0.0.0"). -->
   <Target Name="DeploySystemTextJson" AfterTargets="Publish" Condition="Exists('$(NuGetPackageRoot)system.text.json/9.0.1/lib/net8.0/System.Text.Json.dll')">
-    <Copy SourceFiles="$(NuGetPackageRoot)system.text.json/9.0.1/lib/net8.0/System.Text.Json.dll" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" />
-    <Message Text="System.Text.Json 9.0.1 copiado para o publish (override do framework 8.0.x)." Importance="High" />
+    <ItemGroup>
+      <_StjDlls Include="$(NuGetPackageRoot)system.text.json/9.0.1/lib/net8.0/System.Text.Json.dll" />
+      <_StjDlls Include="$(NuGetPackageRoot)system.text.encodings.web/9.0.1/lib/net8.0/System.Text.Encodings.Web.dll" />
+      <_StjDlls Include="$(NuGetPackageRoot)system.io.pipelines/9.0.1/lib/net8.0/System.IO.Pipelines.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StjDlls)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" />
+    <Message Text="System.Text.Json + Encodings.Web + Pipelines 9.0.1 copiados para o publish." Importance="High" />
   </Target>
 </Project>
