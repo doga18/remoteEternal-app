@@ -134,6 +134,7 @@ public partial class ViewerWindow : Window
         try
         {
             var decoder = new FfmpegDecoder(_client.Media);
+            decoder.ErrorOccurred += msg => Dispatcher.InvokeAsync(() => ShowError(msg));
             decoder.VideoFrameReady += OnVideoFrame;
             decoder.AudioReady += (pcm, rate, ch) =>
             {

@@ -5,7 +5,7 @@ namespace RemoteEternal.App.Services;
 public static class AppState
 {
     /// <summary>Versão enviada ao endpoint de atualização; altere ao publicar uma nova versão.</summary>
-    public const string AppVersion = "1.0.2";
+    public const string AppVersion = "1.0.4";
     private static string ConfigDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RemoteEternal");
 

@@ -8,7 +8,7 @@ bin/
 obj/
 publish/
 libs/
-computador_cliente/
+computador_*/
 
 # Diretórios locais do ambiente de trabalho (não fazem parte do produto)
 lancedb/

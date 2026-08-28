@@ -52,6 +52,7 @@ public sealed class MediaBuffer : IDisposable
         {
             _segments.Clear();
             _length = 0;
+            _wakeAbort = false; // FIX: não deixa o buffer "envenenado" pelo decoder anterior
             Monitor.PulseAll(_lock);
         }
     }
@@ -61,6 +62,16 @@ public sealed class MediaBuffer : IDisposable
         lock (_lock)
         {
             _wakeAbort = true;
+            Monitor.PulseAll(_lock);
+        }
+    }
+
+    /// <summary>Limpa o estado de abort, permitindo que um novo decoder use o buffer.</summary>
+    public void ResetAbort()
+    {
+        lock (_lock)
+        {
+            _wakeAbort = false;
             Monitor.PulseAll(_lock);
         }
     }
@@ -112,6 +123,15 @@ public sealed class MediaBuffer : IDisposable
 
 public unsafe sealed class FfmpegDecoder : IDisposable
 {
+    public string? LastError { get; private set; }
+    public long VideoFrames { get; private set; }
+    public long AudioFrames { get; private set; }
+    public event Action<string>? ErrorOccurred;
+    private void ReportError(string stage, Exception ex)
+    {
+        LastError = $"{stage}: {ex.Message}";
+        try { ErrorOccurred?.Invoke(LastError); } catch { }
+    }
     private readonly MediaBuffer _buffer;
     private readonly AVIOContext* _avio;
     private GCHandle _selfHandle;
@@ -122,6 +142,7 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     private int _videoStream = -1;
     private int _audioStream = -1;
     private volatile bool _disposed;
+    private bool _eofLogged;
     private Thread? _thread;
     private readonly ManualResetEventSlim _threadDone = new();
     private byte[] _rgba = Array.Empty<byte>();
@@ -252,29 +273,49 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     {
         var packet = ffmpeg.av_packet_alloc();
         var frame = ffmpeg.av_frame_alloc();
+        long packets = 0, videoPackets = 0, audioPackets = 0, videoFrames = 0, audioFrames = 0, errors = 0;
+        var lastErrorLog = DateTime.MinValue;
         try
         {
+            DiagnosticLog.Write("FfmpegDecoder", "DecodeLoop iniciado");
             while (!_disposed)
             {
                 int ret = ffmpeg.av_read_frame(_fmt, packet);
                 if (ret < 0)
                 {
+                    errors++;
                     if (ret == AVERROR_EOF || _disposed) break;
+                    // Loga erro persistente (máx 1x por 2s)
+                    if ((DateTime.UtcNow - lastErrorLog).TotalSeconds >= 2)
+                    {
+                        lastErrorLog = DateTime.UtcNow;
+                        DiagnosticLog.Write("FfmpegDecoder", $"av_read_frame erro #{errors}: {Error(ret)} (pkts={packets} vf={videoFrames} af={audioFrames})");
+                    }
                     continue;
                 }
+                packets++;
                 if (packet->stream_index == _videoStream && _videoCtx is not null)
                 {
+                    videoPackets++;
                     DecodeVideo(packet, frame);
                 }
                 else if (packet->stream_index == _audioStream && _audioCtx is not null)
                 {
+                    audioPackets++;
                     DecodeAudio(packet, frame);
                 }
                 ffmpeg.av_packet_unref(packet);
+
+                // Log de progresso a cada 100 pacotes
+                if (packets % 100 == 0)
+                    DiagnosticLog.Write("FfmpegDecoder", $"pkts={packets} vp={videoPackets} vf={videoFrames} ap={audioPackets} af={audioFrames} errs={errors}");
             }
+            DiagnosticLog.Write("FfmpegDecoder", $"DecodeLoop fim: pkts={packets} vf={videoFrames} af={audioFrames} errs={errors}");
         }
-        catch
+        catch (Exception ex)
         {
+            DiagnosticLog.Write("FfmpegDecoder", $"DecodeLoop EXCEÇÃO: {ex.GetType().Name}: {ex.Message}");
+            ReportError("DecodeLoop", ex);
         }
         finally
         {
@@ -287,7 +328,11 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     private void DecodeVideo(AVPacket* packet, AVFrame* frame)
     {
         int ret = ffmpeg.avcodec_send_packet(_videoCtx, packet);
-        if (ret < 0) return;
+        if (ret < 0)
+        {
+            DiagnosticLog.Write("FfmpegDecoder", $"DecodeVideo send_packet falhou: {Error(ret)}");
+            return;
+        }
         while (ffmpeg.avcodec_receive_frame(_videoCtx, frame) >= 0)
         {
             int width = frame->width;
@@ -314,6 +359,9 @@ public unsafe sealed class FfmpegDecoder : IDisposable
                 VideoWidth = width;
                 VideoHeight = height;
             }
+            if (VideoFrames == 0)
+                DiagnosticLog.Write("FfmpegDecoder", $"Primeiro frame de vídeo decodificado: {width}x{height} fmt={srcFormat}");
+            VideoFrames++;
             VideoFrameReady?.Invoke(_rgba, width, height);
         }
     }
@@ -371,7 +419,15 @@ public unsafe sealed class FfmpegDecoder : IDisposable
         long pos = self._avio->pos;
         byte[] tmp = new byte[bufferSize];
         int n = self._buffer.ReadAt(pos, tmp, bufferSize);
-        if (n <= 0) return AVERROR_EOF;
+        if (n <= 0)
+        {
+            if (!self._eofLogged)
+            {
+                self._eofLogged = true;
+                DiagnosticLog.Write("FfmpegDecoder", $"ReadCallback EOF/sem dados em pos={pos} (len={self._buffer.Length})");
+            }
+            return AVERROR_EOF;
+        }
         Marshal.Copy(tmp, 0, (IntPtr)buffer, n);
         self.RecordMediaDump(tmp, n);
         return n;
@@ -486,7 +542,10 @@ public unsafe sealed class FfmpegDecoder : IDisposable
             DiagnosticLog.Write("FfmpegDecoder", $"media-dump parcial fechado: {MediaDumpPath} ({_mediaDumpWritten} bytes)");
         }
         _buffer.WakeAbort();
-        if (!_threadDone.Wait(3000)) return; // thread não saiu; evita liberar memória em uso
+        bool threadExited = _threadDone.Wait(3000);
+        if (!threadExited) return; // thread não saiu; evita liberar memória em uso
+        // FIX: reseta o abort do buffer compartilhado para não envenenar o próximo decoder.
+        _buffer.ResetAbort();
         if (_fmt is not null)
         {
             var fmt = _fmt;
