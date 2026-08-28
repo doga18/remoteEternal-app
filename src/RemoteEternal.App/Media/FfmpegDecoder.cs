@@ -215,8 +215,24 @@ public unsafe sealed class FfmpegDecoder : IDisposable
         }
         _fmt = fmt;
 
-        ret = ffmpeg.avformat_find_stream_info(_fmt, null);
-        if (ret < 0) throw new InvalidOperationException($"avformat_find_stream_info: {Error(ret)}");
+        // Usa os streams lidos do moov SEM avformat_find_stream_info: numa stream ao
+        // vivo, find_stream_info fica BLOQUEADO analisando dados que chegam devagar do
+        // host (~16 s de espera!), acumulando um backlog enorme de vídeo (delay gigante).
+        // O moov do MP4 fragmentado já traz codecpar completo (codec, resolução,
+        // extradata SPS/PPS). Só chama find_stream_info como fallback se o moov não
+        // trouxer um stream de vídeo.
+        bool moovHasVideo = false;
+        for (int i = 0; i < _fmt->nb_streams; i++)
+            if (_fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO) { moovHasVideo = true; break; }
+        if (!moovHasVideo)
+        {
+            ret = ffmpeg.avformat_find_stream_info(_fmt, null);
+            if (ret < 0) throw new InvalidOperationException($"avformat_find_stream_info: {Error(ret)}");
+        }
+        else
+        {
+            DiagnosticLog.Write("FfmpegDecoder", "usando streams do moov (find_stream_info pulado)");
+        }
 
         for (int i = 0; i < _fmt->nb_streams; i++)
         {
