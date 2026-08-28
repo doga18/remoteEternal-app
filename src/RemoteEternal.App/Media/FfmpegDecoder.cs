@@ -183,6 +183,7 @@ public unsafe sealed class FfmpegDecoder : IDisposable
 
     public void Start()
     {
+        DiagnosticLog.Write("FfmpegDecoder", $"decoder Start (app {RemoteEternal.App.Services.AppState.AppVersion})");
         var fmt = ffmpeg.avformat_alloc_context();
         fmt->pb = _avio;
         fmt->flags |= 0x80; // AVFMT_FLAG_CUSTOM_IO
@@ -506,16 +507,21 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     {
         var self = (FfmpegDecoder?)GCHandle.FromIntPtr((IntPtr)opaque).Target;
         if (self is null || self._disposed) return -1;
-        long newPos;
-        switch (whence)
+        // FIX (causa do "Invalid data" / "moov atom not found"): uma stream ao vivo
+        // tem tamanho e fim DESCONHECIDOS. Retornar o tamanho atual do buffer para
+        // AVSEEK_SIZE fazia o demuxer mov achar que o "arquivo" era pequeno e parar
+        // de ler antes do moov chegar. Retornar -1 (desconhecido) faz o FFmpeg ler
+        // sequencialmente à medida que os dados chegam (leitura bloqueante).
+        if (whence == AVSEEK_SIZE || whence == SEEK_END) return -1;
+        long newPos = whence switch
         {
-            case SEEK_SET: newPos = offset; break;
-            case SEEK_CUR: newPos = self._avio->pos + offset; break;
-            case SEEK_END: newPos = self._buffer.Length + offset; break;
-            case AVSEEK_SIZE: newPos = self._buffer.Length; break;
-            default: newPos = -1; break;
-        }
-        if (whence != AVSEEK_SIZE && (newPos < 0 || newPos > self._buffer.Length)) return -1;
+            SEEK_SET => offset,
+            SEEK_CUR => self._avio->pos + offset,
+            _ => -1
+        };
+        // Seeks para trás dentro dos dados já recebidos (moov/moof) são permitidos;
+        // seek além do recebido é rejeitado (o FFmpeg lê sequencialmente nesse caso).
+        if (newPos < 0 || newPos > self._buffer.Length) return -1;
         return newPos;
     }
 

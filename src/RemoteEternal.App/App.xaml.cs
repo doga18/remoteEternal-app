@@ -17,6 +17,7 @@ public partial class App : Application
         // extração FFmpeg é capturada e gravada em %APPDATA%\RemoteEternal\error.log.
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        DiagnosticLog.Write("App", $"RemoteEternal {AppState.AppVersion} iniciando");
 
         try
         {
