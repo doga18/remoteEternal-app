@@ -36,3 +36,9 @@ dist/
 
 # Backup local (RAR) — não versionar
 *.rar
+
+# Scripts temporários de edição
+edit-script.js
+fix-script.js
+fix2.js
+apply-fix.js
