@@ -55,7 +55,14 @@
                 <TextBlock Text="🖥" FontSize="16" VerticalAlignment="Center"/>
                 <TextBlock x:Name="TxtTitle" Text="Conectando..." Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0,16,0"/>
                 <TextBlock Text="Monitor:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
-                <ComboBox x:Name="CboMonitor" MinWidth="150" SelectionChanged="OnMonitorChanged"/>
+                <ComboBox x:Name="CboMonitor" MinWidth="180" SelectionChanged="OnMonitorChanged">
+                    <ComboBox.ItemContainerStyle>
+                        <Style TargetType="ComboBoxItem">
+                            <Setter Property="Foreground" Value="#FFE8EAF0"/>
+                            <Setter Property="Background" Value="#FF2A2C33"/>
+                        </Style>
+                    </ComboBox.ItemContainerStyle>
+                </ComboBox>
                 <CheckBox x:Name="ChkAudio" Content="Áudio" IsChecked="True" Checked="OnAudioChanged" Unchecked="OnAudioChanged"/>
                 <Button x:Name="BtnFullscreen" Content="Tela cheia" Click="OnFullscreenClick"/>
                 <Button x:Name="BtnDisconnect" Content="Desconectar" Background="#FF8A3B3B" Click="OnDisconnectClick"/>
