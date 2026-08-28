@@ -168,7 +168,6 @@ public unsafe sealed class FfmpegDecoder : IDisposable
     public event Action<byte[], int, int>? AudioReady;
 
     private static readonly avio_alloc_context_read_packet ReadFunc = ReadCallback;
-    private static readonly avio_alloc_context_seek SeekFunc = SeekCallback;
 
     public FfmpegDecoder(MediaBuffer buffer)
     {
@@ -177,7 +176,12 @@ public unsafe sealed class FfmpegDecoder : IDisposable
 
         _selfHandle = GCHandle.Alloc(this);
         byte* avioBuffer = (byte*)ffmpeg.av_malloc(64 * 1024);
-        _avio = ffmpeg.avio_alloc_context(avioBuffer, 64 * 1024, 0, (void*)GCHandle.ToIntPtr(_selfHandle), ReadFunc, null, SeekFunc);
+        // NON-SEEKABLE (sem callback de seek): para MP4 fragmentado ao vivo, o demuxer
+        // mov lê os fragmentos SEQUENCIALMENTE (ftyp/moov/moof/mdat) e bloqueia na
+        // leitura quando alcança o fim dos dados recebidos (ReadAt), continuando quando
+        // novos dados chegam. Um stream seekable fazia o demuxer escanear a stream via
+        // seeks (lento) e causava "moov atom not found" / "Invalid data".
+        _avio = ffmpeg.avio_alloc_context(avioBuffer, 64 * 1024, 0, (void*)GCHandle.ToIntPtr(_selfHandle), ReadFunc, null, null);
         if (_avio is null) throw new InvalidOperationException("Falha ao criar AVIOContext");
     }
 
@@ -491,38 +495,6 @@ public unsafe sealed class FfmpegDecoder : IDisposable
         _mediaDumpStream = null;
         _mediaDumpDone = true;
         DiagnosticLog.Write("FfmpegDecoder", $"media-dump salvo: {MediaDumpPath} ({_mediaDumpWritten} bytes)");
-    }
-
-    private const int SEEK_SET = 0;
-    private const int SEEK_CUR = 1;
-    private const int SEEK_END = 2;
-    private const int AVSEEK_SIZE = 0x10000;
-
-    /// <summary>
-    /// Seek real sobre os dados já recebidos. Permite ao demuxer mov voltar ao
-    /// moov/moof (offset conhecido) sem travar; seek além do recebido retorna -1
-    /// (o FFmpeg lê sequencialmente quando o dado chega).
-    /// </summary>
-    private static long SeekCallback(void* opaque, long offset, int whence)
-    {
-        var self = (FfmpegDecoder?)GCHandle.FromIntPtr((IntPtr)opaque).Target;
-        if (self is null || self._disposed) return -1;
-        // FIX (causa do "Invalid data" / "moov atom not found"): uma stream ao vivo
-        // tem tamanho e fim DESCONHECIDOS. Retornar o tamanho atual do buffer para
-        // AVSEEK_SIZE fazia o demuxer mov achar que o "arquivo" era pequeno e parar
-        // de ler antes do moov chegar. Retornar -1 (desconhecido) faz o FFmpeg ler
-        // sequencialmente à medida que os dados chegam (leitura bloqueante).
-        if (whence == AVSEEK_SIZE || whence == SEEK_END) return -1;
-        long newPos = whence switch
-        {
-            SEEK_SET => offset,
-            SEEK_CUR => self._avio->pos + offset,
-            _ => -1
-        };
-        // Seeks para trás dentro dos dados já recebidos (moov/moof) são permitidos;
-        // seek além do recebido é rejeitado (o FFmpeg lê sequencialmente nesse caso).
-        if (newPos < 0 || newPos > self._buffer.Length) return -1;
-        return newPos;
     }
 
     private static string Error(int code)
