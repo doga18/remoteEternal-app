@@ -51,6 +51,9 @@ public class SessionClient : IAsyncDisposable
     /// <summary>Frame de mídia cru recebido do host (formato: [flags(1)][ptsMs(8)][nalData]).
     /// Usado pelo pipeline de tempo real (decoder H.264 por parser).</summary>
     public event Action<byte[]>? MediaFrameReceived;
+
+    /// <summary>Frame de áudio PCM ([sampleRate(4)][channels(1)][pcm16le]) do host.</summary>
+    public event Action<byte[]>? AudioFrameReceived;
     public string? DeviceName { get; private set; }
 
     /// <summary>Raised when a valid <see cref="SessionHello"/> is decoded by the read loop.</summary>
@@ -185,6 +188,9 @@ public class SessionClient : IAsyncDisposable
                         break;
                     case SecureFrameChannel.TypeMedia:
                         MediaFrameReceived?.Invoke(payload);
+                        break;
+                    case SecureFrameChannel.TypeAudio:
+                        AudioFrameReceived?.Invoke(payload);
                         break;
                 }
                 if (failReason is not null) break;

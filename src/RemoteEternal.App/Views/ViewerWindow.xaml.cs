@@ -42,6 +42,7 @@ public partial class ViewerWindow : Window
         _client.Connected += () => Dispatcher.InvokeAsync(() => TxtStatus.Text = "Aguardando informações da tela...");
         _client.MediaRestarted += () => Dispatcher.InvokeAsync(OnMediaRestart);
         _client.MediaFrameReceived += OnMediaFrame;
+        _client.AudioFrameReceived += OnAudioFrame;
         _client.ErrorReceived += msg => Dispatcher.InvokeAsync(() => ShowError(msg));
         _client.Ended += reason => Dispatcher.InvokeAsync(() => CloseSession(reason));
         _client.Closed += () => Dispatcher.InvokeAsync(() =>
@@ -136,6 +137,21 @@ public partial class ViewerWindow : Window
         var nal = new byte[payload.Length - 9];
         Buffer.BlockCopy(payload, 9, nal, 0, nal.Length);
         _decoder?.FeedPacket(nal, isKey, pts);
+    }
+
+    /// <summary>Recebe um frame de áudio PCM ([sampleRate(4)][channels(1)][pcm16le]) e o reproduz.</summary>
+    private void OnAudioFrame(byte[] payload)
+    {
+        if (payload.Length < 6) return;
+        int sampleRate = BinaryPrimitives.ReadInt32LittleEndian(payload.AsSpan(0));
+        int channels = payload[4];
+        if (channels <= 0) return;
+        try
+        {
+            _audio.SetFormat(sampleRate, channels);
+            _audio.AddSamples(payload, 5, payload.Length - 5);
+        }
+        catch { }
     }
 
     private void StartDecoder()

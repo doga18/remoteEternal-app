@@ -27,6 +27,7 @@ public sealed class SecureFrameChannel
     public const byte TypeControl = 0;
     public const byte TypeMedia = 1;
     public const byte TypeInput = 2;
+    public const byte TypeAudio = 3;
 
     public static ReadOnlySpan<byte> LabelWrite => "write"u8;
     public static ReadOnlySpan<byte> LabelRead => "read"u8;

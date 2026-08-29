@@ -73,7 +73,6 @@ public sealed unsafe class ScreenCapture : IDisposable
         IDXGIOutput? output = null;
         IDXGIOutput1? output1 = null;
         AVCodecContext* enc = null;
-        SwsContext* sws = null;
         AVFrame* frame = null;
         AVPacket* packet = null;
         try
@@ -108,7 +107,9 @@ public sealed unsafe class ScreenCapture : IDisposable
             DiagnosticLog.Write("ScreenCapture", "step2 OK: encoder encontrado");
             enc = ffmpeg.avcodec_alloc_context3(codec);
             enc->width = Width; enc->height = Height;
-            enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_NV12;
+            // NVENC aceita BGRA diretamente: evita a conversão BGRA->NV12 em CPU
+            // (sws_scale), que era o gargalo de FPS.
+            enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_BGRA;
             enc->time_base = new AVRational { num = 1, den = fps };
             enc->framerate = new AVRational { num = fps, den = 1 };
             enc->bit_rate = bitrateKbps * 1000L;
@@ -119,20 +120,19 @@ public sealed unsafe class ScreenCapture : IDisposable
             ffmpeg.av_dict_set(&opts, "tune", "ll", 0);
             ffmpeg.av_dict_set(&opts, "zerolatency", "1", 0);
             ffmpeg.av_dict_set(&opts, "rc", "cbr", 0);
+            // Repete SPS/PPS em cada keyframe: permite que um cliente que conectou
+            // no meio do stream sincronize no próximo keyframe (evita tela preta).
+            ffmpeg.av_dict_set(&opts, "repeat-headers", "1", 0);
+            ffmpeg.av_dict_set(&opts, "forced-idr", "1", 0);
             DiagnosticLog.Write("ScreenCapture", "step3: abrindo encoder nvenc...");
             int ret = ffmpeg.avcodec_open2(enc, codec, &opts);
             ffmpeg.av_dict_free(&opts);
             if (ret < 0) { ReportFail("avcodec_open2: " + Err(ret)); return; }
 
-            sws = ffmpeg.sws_getContext(Width, Height, AVPixelFormat.AV_PIX_FMT_BGRA,
-                Width, Height, AVPixelFormat.AV_PIX_FMT_NV12, 2, null, null, null);
             frame = ffmpeg.av_frame_alloc();
-            frame->format = (int)AVPixelFormat.AV_PIX_FMT_NV12;
+            frame->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
             frame->width = Width; frame->height = Height;
             ffmpeg.av_frame_get_buffer(frame, 32);
-            byte*[] dstData = new byte*[4];
-            int[] dstLinesize = new int[4];
-            for (uint p = 0; p < 4; p++) { dstData[p] = frame->data[p]; dstLinesize[p] = frame->linesize[p]; }
             packet = ffmpeg.av_packet_alloc();
 
             var swClock = Stopwatch.StartNew();
@@ -156,10 +156,18 @@ public sealed unsafe class ScreenCapture : IDisposable
 
                 var mapped = ctx.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
                 int rowPitch = (int)mapped.RowPitch;
-                byte*[] srcPlanes = { (byte*)mapped.DataPointer, null, null, null };
-                int[] srcStride = { rowPitch, 0, 0, 0 };
                 ffmpeg.av_frame_make_writable(frame);
-                ffmpeg.sws_scale(sws, srcPlanes, srcStride, 0, Height, dstData, dstLinesize);
+                // Cópia direta BGRA linha a linha (rowPitch -> linesize).
+                byte* srcRow = (byte*)mapped.DataPointer;
+                byte* dstRow = frame->data[0];
+                int dstStride = frame->linesize[0];
+                int rowBytes = Math.Min(rowPitch, dstStride);
+                for (int y = 0; y < Height; y++)
+                {
+                    Buffer.MemoryCopy(srcRow, dstRow, dstStride, rowBytes);
+                    srcRow += rowPitch;
+                    dstRow += dstStride;
+                }
                 ctx.Unmap(staging, 0);
 
                 frame->pts = frameIndex;
@@ -188,7 +196,6 @@ public sealed unsafe class ScreenCapture : IDisposable
             if (packet != null) { var p = packet; ffmpeg.av_packet_free(&p); }
             if (frame != null) { var f = frame; ffmpeg.av_frame_free(&f); }
             if (enc != null) { var e = enc; ffmpeg.avcodec_free_context(&e); }
-            if (sws != null) ffmpeg.sws_freeContext(sws);
             staging?.Dispose();
             duplication?.Dispose();
             output1?.Dispose();

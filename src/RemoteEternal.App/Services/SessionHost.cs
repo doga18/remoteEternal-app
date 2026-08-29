@@ -19,6 +19,7 @@ public class SessionHost : IAsyncDisposable
     private CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _activeLock = new(1, 1);
     private ScreenCapture? _capture;
+    private AudioCapture? _audioCapture;
     private SecureFrameChannel? _channel;
     private MonitorInfo? _activeMonitor;
     private List<MonitorInfo> _monitors = new();
@@ -354,6 +355,16 @@ public class SessionHost : IAsyncDisposable
         };
         _capture = capture;
         capture.Start(monitor.DeviceName, fps, bitrateKbps);
+
+        // Áudio do sistema (loopback) enviado separadamente do vídeo.
+        if (audioEnabled)
+        {
+            var audio = new AudioCapture();
+            audio.AudioReady += OnAudioData;
+            audio.Failed += msg => DiagnosticLog.Write("SessionHost", "Áudio: " + msg);
+            _audioCapture = audio;
+            audio.Start();
+        }
         StatusChanged?.Invoke($"Capturando: {MonitorEnumeration.FriendlyName(monitor.DeviceName)}");
     }
 
@@ -368,6 +379,28 @@ public class SessionHost : IAsyncDisposable
         Buffer.BlockCopy(nal, 0, frame, 9, nal.Length);
         if (!_mediaQueue.Writer.TryWrite(frame))
             _mediaQueue.Writer.WriteAsync(frame).AsTask().Wait();
+    }
+
+    private void OnAudioData(byte[] pcm, int sampleRate, int channels)
+    {
+        var channel = _channel;
+        if (channel is null || pcm is null || pcm.Length == 0) return;
+        try
+        {
+            // Frame de áudio: [sampleRate(4)][channels(1)][pcm16le].
+            byte[] frame = new byte[5 + pcm.Length];
+            BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(0), sampleRate);
+            frame[4] = (byte)channels;
+            Buffer.BlockCopy(pcm, 0, frame, 5, pcm.Length);
+            _ = SendAudioSafeAsync(channel, frame);
+        }
+        catch { }
+    }
+
+    private async Task SendAudioSafeAsync(SecureFrameChannel channel, byte[] frame)
+    {
+        try { await channel.SendAsync(SecureFrameChannel.TypeAudio, frame).ConfigureAwait(false); }
+        catch { }
     }
 
     private async Task MediaSenderLoopAsync()
@@ -404,6 +437,8 @@ public class SessionHost : IAsyncDisposable
         {
         }
         _capture = null;
+        try { _audioCapture?.Stop(); _audioCapture?.Dispose(); } catch { }
+        _audioCapture = null;
         try { _mediaQueue.Writer.TryComplete(); } catch { }
         try { _mediaSenderTask?.Wait(2000); } catch { }
         _mediaSenderTask = null;
